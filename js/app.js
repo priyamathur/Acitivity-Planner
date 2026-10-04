@@ -1,6 +1,6 @@
 import { ACTIVITIES, CATEGORIES, SEASONS } from './data.js';
 import { currentSeason, ageFromBirthYear, weatherBucket, weatherLabel, fitsAges, VIBES, weekDays, DAY_KEYS, DAY_NAMES, classDays, bookedFor, freeWindows, fillWeekend, swapPick, classKind, toMin } from './planner.js';
-import { PLACE_TYPES, findPlaces, geocode, getForecast, getPosition, directionsUrl, osmUrl } from './near.js';
+import { PLACE_TYPES, CLASS_TYPES, findPlaces, geocode, getForecast, getPosition, directionsUrl, osmUrl } from './near.js';
 import * as store from './store.js';
 import * as api from './api.js';
 import { cellFor, bandsForAges, bandLabel } from './community.js';
@@ -188,10 +188,11 @@ function renderWeekend(root) {
       </div>
     </section>
 
-    <button class="card row-btn" id="classes-btn">
-      <span>🗓️ ${classCount ? `<b>${classCount} class${classCount > 1 ? 'es' : ''} this week</b>` : "<b>Add the kids' classes</b>"}</span>
-      <span class="meta">${classCount ? 'Edit' : 'Swimming, football…'} ›</span>
-    </button>
+    <div class="classes-bar">
+      ${classCount ? `<button class="card row-btn" id="classes-btn"><span>🗓️ <b>${classCount} class${classCount > 1 ? 'es' : ''} this week</b></span><span class="meta">See all ›</span></button>` : ''}
+      <button class="btn sm ${classCount ? '' : 'primary'}" id="add-class-top">+ Add a class</button>
+      <button class="btn sm ghost" id="find-classes-top">🔎 Find classes</button>
+    </div>
 
     ${!plan ? `<section class="plan-form">
       <div class="vibes" role="radiogroup" aria-label="What kind of weekend?">${Object.entries(VIBES).map(([k, v]) => `<label class="vibe"><input type="radio" name="vibe" value="${k}" ${vibe === k ? 'checked' : ''}/><span>${v.emoji} ${v.label}</span></label>`).join('')}</div>
@@ -214,7 +215,9 @@ function renderWeekend(root) {
     </nav>`;
 
   $$('[data-wk]', root).forEach((b) => (b.onclick = () => { weekendOffset = Number(b.dataset.wk); renderWeekend(root); }));
-  $('#classes-btn', root).onclick = () => (classCount ? classesSheet() : classForm());
+  $('#classes-btn', root)?.addEventListener('click', classesSheet);
+  $('#add-class-top', root).onclick = () => classForm();
+  $('#find-classes-top', root).onclick = () => classFinder();
   const planBtn = $('#plan-btn', root);
   if (planBtn) planBtn.onclick = () => {
     const v = $('input[name=vibe]:checked', root)?.value || 'mix';
@@ -263,9 +266,11 @@ function classesSheet() {
       ${d.booked.map((c) => `<button class="cls-row" data-edit-class="${c.id}|${d.date}">
         <span>${esc(classKind(c.title).emoji)} ${esc(c.title)}<span class="meta">${[kidName(c.kid), c.where, c.repeat === 'once' ? 'this week only' : ''].filter(Boolean).map(esc).join(' · ')}</span></span>
         <span class="meta">${esc(c.start)}–${esc(c.end)}</span></button>`).join('')}</div>`).join('')}
-    <button class="btn primary big" id="add-class">+ Add a class</button>`,
+    <button class="btn primary big" id="add-class">+ Add a class</button>
+    <button class="btn ghost big" id="find-classes">🔎 Find classes nearby</button>`,
   (el) => {
     $('#add-class', el).onclick = () => classForm();
+    $('#find-classes', el).onclick = () => classFinder();
     $$('[data-edit-class]', el).forEach((b) => (b.onclick = () => {
       const [id, date] = b.dataset.editClass.split('|');
       classForm(S().classes.find((c) => c.id === id), week.find((d) => d.date === date));
@@ -365,11 +370,11 @@ function sharePlan(days, plan) {
 }
 
 // ---------------- Classes & one-off plans ----------------
-function classForm(c = null, day = null) {
+function classForm(c = null, day = null, prefill = null) {
   const kids = S().family.kids;
   const { week } = weekendModel();
   const isNew = !c;
-  c ??= { title: '', kid: kids.length === 1 ? '0' : '', days: ['sat'], start: '09:00', end: '10:00', where: '', repeat: 'weekly' };
+  c ??= { title: '', kid: kids.length === 1 ? '0' : '', days: ['sat'], start: '09:00', end: '10:00', where: '', repeat: 'weekly', ...prefill };
   const chosen = classDays(c);
   openSheet(`<h2>${isNew ? 'Add a class or plan' : 'Edit'}</h2>
     <form id="cls" class="col gap">
@@ -411,6 +416,41 @@ function classForm(c = null, day = null) {
     if (del) del.onclick = () => { store.set((s) => (s.classes = s.classes.filter((x) => x.id !== c.id))); closeSheet(); rerender(); };
     const skip = $('#skip', el);
     if (skip) skip.onclick = () => { store.set((s) => { const x = s.classes.find((y) => y.id === c.id); (x.skip ??= {})[day.date] = true; }); closeSheet(); toast(`Skipped on ${fmtDate(day.date)}`); rerender(); };
+  });
+}
+
+// ---------------- Find classes nearby ----------------
+let finderType = 'swimming';
+
+function classFinder() {
+  const loc = S().location;
+  openSheet(`<h2>Find classes nearby</h2>
+    ${loc ? '' : '<p class="meta">Set your area first so I know where to look.</p><a class="btn primary" href="#near">📍 Set my area</a>'}
+    ${loc ? `<div class="chips-scroll">${Object.entries(CLASS_TYPES).map(([k, t]) => `<button class="chip-btn ${k === finderType ? 'on' : ''}" data-ctype="${k}">${t.emoji} ${t.label}</button>`).join('')}</div>
+      <div id="finder-list"><p class="empty">Looking… 🔎</p></div>
+      <p class="fine">Venues from OpenStreetMap. Class times aren't in map data, so check the venue's website, or ask the chat to look them up.</p>` : ''}`,
+  async (el) => {
+    if (!loc) return;
+    $$('[data-ctype]', el).forEach((b) => (b.onclick = () => { finderType = b.dataset.ctype; classFinder(); }));
+    const t = CLASS_TYPES[finderType];
+    const list = $('#finder-list', el);
+    try {
+      const places = (await findPlaces(finderType, loc, 10)).filter((p) => p.named).slice(0, 15);
+      if (!$('#finder-list')) return; // sheet closed or changed
+      list.innerHTML = places.length ? places.map((p, i) => `<div class="venue">
+          <div><b>${t.emoji} ${esc(p.name)}</b><span class="meta">${p.km < 1 ? Math.round(p.km * 1000) + ' m' : p.km.toFixed(1) + ' km'} away${p.website ? ` · <a href="${esc(p.website)}" target="_blank" rel="noopener">Website</a>` : ` · <a href="${directionsUrl(p)}" target="_blank" rel="noopener">Directions</a>`}</span></div>
+          <div class="row gap-sm wrap"><button class="btn sm" data-add-venue="${i}">+ Add as a class</button>${api.chatEnabled() ? `<button class="btn sm ghost" data-ask-venue="${i}">💬 Ask chat for times</button>` : ''}</div>
+        </div>`).join('') : `<p class="empty">No ${t.label.toLowerCase()} venues found within 10 km. Try another type.</p>`;
+      $$('[data-add-venue]', list).forEach((b) => (b.onclick = () => classForm(null, null, { title: t.title, where: places[Number(b.dataset.addVenue)].name })));
+      $$('[data-ask-venue]', list).forEach((b) => (b.onclick = () => {
+        const p = places[Number(b.dataset.askVenue)];
+        chat.draft = `Find ${t.label.toLowerCase()} classes for the kids at ${p.name}${p.website ? ` (${p.website})` : ''}: days, times and ages, and add one if it fits our week.`;
+        closeSheet();
+        location.hash = 'chat';
+      }));
+    } catch (e) {
+      if ($('#finder-list')) list.innerHTML = `<p class="empty">${esc(e.message)}</p>`;
+    }
   });
 }
 
@@ -456,10 +496,11 @@ function saveCustoms(customs) {
 // ======================= Chat =======================
 // The conversation stays in memory (it holds Claude's raw content blocks, which
 // must be sent back unchanged). The changes it makes are saved like any other edit.
-const chat = { messages: [], log: [], busy: false, remaining: null };
+const chat = { messages: [], log: [], busy: false, remaining: null, draft: '' };
 const CHAT_SUGGESTIONS = [
   "There's a pumpkin festival nearby this Saturday, let's go",
   "Leo's football on Thursday moved to 5–6pm",
+  'Find a Saturday morning swimming class for Mia near us',
   "It's going to rain on Sunday. Make it cosy",
   'Plan next weekend for us',
 ];
@@ -595,10 +636,10 @@ async function runTool(name, input) {
     case 'find_places': {
       const loc = S().location;
       if (!loc) return fail("The family hasn't set their area yet. Ask them to tap Near me → Use my location.");
-      if (!PLACE_TYPES[input.type]) return fail('Unknown place type.');
+      if (!PLACE_TYPES[input.type] && !CLASS_TYPES[input.type]) return fail('Unknown place type.');
       try {
         const places = (await findPlaces(input.type, loc, input.radius_km || 5)).filter((p) => p.named).slice(0, 8);
-        return { ok: true, places: places.map((p) => ({ name: p.name, km: Number(p.km.toFixed(1)), free: p.fee === 'no' || undefined, toilets: p.toilets === 'yes' || undefined, hours: p.hours || undefined })) };
+        return { ok: true, places: places.map((p) => ({ name: p.name, km: Number(p.km.toFixed(1)), website: p.website || undefined, free: p.fee === 'no' || undefined, toilets: p.toilets === 'yes' || undefined, hours: p.hours || undefined })) };
       } catch (e) {
         return fail(e.message);
       }
@@ -637,7 +678,7 @@ function renderChat(root) {
         <div class="chat-suggest">${CHAT_SUGGESTIONS.map((t) => `<button class="chip-btn" data-suggest="${esc(t)}">${esc(t)}</button>`).join('')}</div>`}
     </section>
     <form id="chat-form" class="chat-form">
-      <input id="chat-input" class="input grow" autocomplete="off" maxlength="600" placeholder="Message LittleRoam…" aria-label="Message" ${chat.busy ? 'disabled' : ''} />
+      <input id="chat-input" class="input grow" autocomplete="off" maxlength="600" placeholder="Message LittleRoam…" aria-label="Message" value="${esc(chat.draft || '')}" ${chat.busy ? 'disabled' : ''} />
       <button class="btn primary" ${chat.busy ? 'disabled' : ''}>Send</button>
     </form>
     <p class="fine chat-fine">Chat sends your message and your family plan (kids' nicknames, ages, classes) to Claude, and may search the web. No photos or memories.</p>`;
@@ -649,6 +690,7 @@ function renderChat(root) {
   $$('[data-suggest]', root).forEach((b) => (b.onclick = () => { $('#chat-input', root).value = b.dataset.suggest; $('#chat-input', root).focus(); }));
   const nw = $('#chat-new', root);
   if (nw) nw.onclick = () => { Object.assign(chat, { messages: [], log: [], busy: false }); renderChat(root); };
+  chat.draft = '';
   if (!chat.busy) $('#chat-input', root).focus({ preventScroll: true });
 }
 
@@ -911,7 +953,7 @@ function renderMemories(root) {
     <a class="back" href="#weekend">‹ Weekend</a>
     <section class="hero"><h1>Past weekends</h1><p class="lede">Private to your family. No likes, no followers, no comparing.</p></section>
     <div class="grid three stats">
-      <div class="stat"><strong>${weekendsOut}</strong><span>weekends with an adventure</span></div>
+      <div class="stat"><strong>${weekendsOut}</strong><span>${weekendsOut === 1 ? 'weekend' : 'weekends'} with an adventure</span></div>
       <div class="stat"><strong>${thisYear.length}</strong><span>in ${year}</span></div>
       <div class="stat"><strong>${outdoors}</strong><span>outdoor adventures</span></div>
     </div>

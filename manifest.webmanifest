@@ -5,8 +5,8 @@
   "start_url": "./#weekend",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#F1FAFF",
-  "theme_color": "#1E8FFF",
+  "background_color": "#FFF8EC",
+  "theme_color": "#FF6B4A",
   "orientation": "portrait",
   "categories": ["lifestyle", "parenting", "education"],
   "icons": [

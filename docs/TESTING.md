@@ -28,6 +28,8 @@
 - [x] Send to my partner: the whole weekend plus the coming weekday classes; past classes are left out
 - [x] Skip a weekly class for one date only; the one-off party doesn't leak into next weekend
 - [x] Ideas → Add to our weekend → pick a slot; favourites filter
+- [x] Find classes nearby: pick a type (e.g. Martial arts) → the right map query (dojos) → "+ Add as a class" pre-fills the class name and venue; "Ask chat for times" is hidden without AI
+- [x] Two tabs only (Weekend, Chat); Places near us, All ideas and Past weekends open from Weekend, keep the Weekend tab highlighted, and have a "‹ Weekend" back link
 - [x] Near me: GPS and city search, place list, activity pairing
 - [x] Memories: timeline, "weekends with an adventure", yearly recap
 - [x] Data survives a page reload; activity deep links (`#a/<id>`) open
@@ -48,8 +50,10 @@
 - [x] **Edge case found and fixed:** the chat could put the same activity in two slots. It is now moved instead of duplicated
 - [x] Bad tool requests (a slot that doesn't exist, a date in the past, end before start, an unknown child) are rejected, Claude is told why, and **nothing in the app changes**
 - [x] "Skip swimming next week": skips one date only
+- [x] "Find a Saturday swimming class for Mia": Claude uses the class-venue finder and gets venue websites back to look up timetables
+- [x] Venue → "Ask chat for times" opens the chat with the venue and its website already in the message box
 - [x] Chat history survives switching tabs; "New chat" clears the chat but keeps the plan
-- [x] Daily chat limit: the 7th message is politely refused, and tool steps don't count toward it
+- [x] Daily chat limit: the message over the limit is politely refused, and tool steps don't count toward it
 - [x] Without a server, the Chat tab explains that it needs AI instead of breaking
 - [x] Claude is sent today's date, the kids, the classes (with ids) and both weekends' free slots; all 8 app tools plus web search; strict tool schemas
 

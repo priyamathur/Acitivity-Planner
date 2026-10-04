@@ -48,6 +48,11 @@ function chatReply(messages) {
     const errors = results.filter((r) => r.is_error).length;
     return { stop_reason: 'end_turn', content: [text(`Sorry, ${errors} of those didn't work. Which day would you like the zoo?`)] };
   }
+  if (/swimming class/i.test(said)) {
+    if (step === 0) return { stop_reason: 'tool_use', content: [toolUse('find_places', { type: 'swimming', radius_km: 5 })] };
+    const places = JSON.parse(lastResult.content).places || [];
+    return { stop_reason: 'end_turn', content: [text(`The nearest pool is ${places[0]?.name} (${places[0]?.km} km). Want me to look up their Saturday lessons?`)] };
+  }
   if (/skip swimming/i.test(said)) {
     if (step === 0) return { stop_reason: 'tool_use', content: [toolUse('skip_class_once', { id: idOf('Swimming'), date: '2026-10-17' })] };
     return { stop_reason: 'end_turn', content: [text('Swimming is skipped on 17 Oct.')] };

@@ -56,7 +56,7 @@ try {
   await page.getByText(/Not enough families near you have shared yet.*at least 2 families/).waitFor();
 
   // Add Mia's swimming class.
-  await page.locator('#classes-btn').click();
+  await page.locator('#add-class-top').click();
   await page.fill('input[name=title]', "Mia's swimming");
   await page.fill('input[name=start]', '09:00');
   await page.fill('input[name=end]', '10:00');

@@ -1,27 +1,27 @@
 :root {
-  --bg: #F1FAFF;
+  --bg: #FFF8EC;
   --surface: #FFFFFF;
-  --surface-2: #E0F3FF;
-  --text: #16324A;
-  --muted: #5D7488;
-  --line: #D4EAF7;
-  --brand: #1E8FFF;
+  --surface-2: #FFF0D6;
+  --text: #2A2140;
+  --muted: #6E6683;
+  --line: #F3E3C8;
+  --brand: #FF6B4A;
   --brand-ink: #FFFFFF;
-  --brand-soft: #DCEEFF;
-  --accent: #FF8A3D;
-  --sat: #FF8A3D;
-  --sun: #3CCB7F;
-  --danger: #E5484D;
+  --brand-soft: #FFE3D9;
+  --accent: #F2A100;
+  --sat: #FFC93C;
+  --sun: #4CB8F5;
+  --danger: #D6336C;
   --radius: 16px;
-  --shadow: 0 1px 2px rgb(22 50 74 / .05), 0 4px 16px rgb(22 50 74 / .06);
+  --shadow: 0 1px 2px rgb(42 33 64 / .05), 0 4px 16px rgb(42 33 64 / .06);
   --font-display: "Nunito", ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0F1E2B; --surface: #16293A; --surface-2: #1D3448; --text: #E8F3FB; --muted: #9BB3C6;
-    --line: #24405A; --brand: #4AA8FF; --brand-ink: #06233F; --brand-soft: #183A57; --accent: #FF9F5A;
-    --sat: #FF9F5A; --sun: #4FD88E; --danger: #FF7A7F; --shadow: none; color-scheme: dark;
+    --bg: #1E1A26; --surface: #29233A; --surface-2: #332B47; --text: #F6F1FF; --muted: #B5ACC9;
+    --line: #3B3352; --brand: #FF8266; --brand-ink: #2A1208; --brand-soft: #4A2C2F; --accent: #FFC93C;
+    --sat: #FFC93C; --sun: #6CC6FF; --danger: #FF7A9C; --shadow: none; color-scheme: dark;
   }
 }
 * { box-sizing: border-box; }
@@ -338,7 +338,7 @@ label.radio { flex-direction: row; align-items: center; gap: 6px; font-weight: 5
 .explore-link:hover { color: var(--brand); }
 .back { display: inline-block; color: var(--muted); text-decoration: none; font-weight: 600; padding: 4px 0; margin-bottom: -6px; }
 
-/* ---- Playful layer (Ocean palette) ---- */
+/* ---- Playful layer (Sunny palette) ---- */
 h1,h2,.day-head strong,.brand{font-family:var(--font-display);letter-spacing:-.01em}
 .wk-head h1{color:var(--text)}
 .wk-head .eyebrow{color:var(--brand);font-weight:800}
@@ -372,3 +372,10 @@ h1,h2,.day-head strong,.brand{font-family:var(--font-display);letter-spacing:-.0
 .tab span { font-size: 1.2rem; }
 .explore { gap: 4px 14px; }
 .explore-link { font-size: .88rem; }
+.classes-bar { display: flex; flex-wrap: wrap; gap: 8px; }
+.classes-bar .row-btn { flex: 1 1 100%; }
+.classes-bar .btn { flex: 1 1 0; }
+.venue { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.venue > div:first-child { display: flex; flex-direction: column; }
+.btn.big + .btn.big { margin-top: 8px; }
+.classes-bar .btn.sm { flex: 1 1 0; min-height: 40px; white-space: nowrap; }

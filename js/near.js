@@ -17,10 +17,24 @@ export const PLACE_TYPES = {
   treat:      { label: 'Ice cream', emoji: '🍦', filters: ['["amenity"="ice_cream"]', '["shop"="ice_cream"]'], pair: null },
 };
 
+// Where kids' classes happen. OpenStreetMap knows the venues, not their timetables,
+// so the app links to each venue's website and the chat can look up class times.
+export const CLASS_TYPES = {
+  swimming:  { label: 'Swimming', emoji: '🏊', title: 'Swimming', filters: ['["leisure"="swimming_pool"]["name"]', '["leisure"="sports_centre"]["sport"~"swimming"]'] },
+  dance:     { label: 'Dance', emoji: '🩰', title: 'Dance', filters: ['["leisure"="dance"]', '["amenity"="dancing_school"]'] },
+  martial:   { label: 'Martial arts', emoji: '🥋', title: 'Martial arts', filters: ['["amenity"="dojo"]', '["sport"~"martial_arts|karate|judo|taekwondo|jiu-jitsu|aikido"]'] },
+  music:     { label: 'Music', emoji: '🎹', title: 'Music lessons', filters: ['["amenity"="music_school"]'] },
+  art:       { label: 'Art & craft', emoji: '🎨', title: 'Art class', filters: ['["amenity"="arts_centre"]', '["craft"="pottery"]["name"]'] },
+  sports:    { label: 'Sports clubs', emoji: '⚽', title: 'Sports club', filters: ['["club"="sport"]', '["leisure"="sports_centre"]["name"]'] },
+  community: { label: 'Community centres', emoji: '🏘️', title: 'Class', filters: ['["amenity"="community_centre"]', '["amenity"="library"]'] },
+};
+
+const typeDef = (type) => PLACE_TYPES[type] || CLASS_TYPES[type];
+
 const OVERPASS = 'https://overpass-api.de/api/interpreter';
 
 export function buildQuery(type, lat, lon, radiusM) {
-  const t = PLACE_TYPES[type];
+  const t = typeDef(type);
   const parts = t.filters.map((f) => `nwr${f}(around:${radiusM},${lat},${lon});`).join('');
   return `[out:json][timeout:25];(${parts});out center tags 80;`;
 }
@@ -34,7 +48,7 @@ export function parsePlaces(json, origin, type) {
       const tags = e.tags || {};
       if (lat == null || lon == null) return null;
       if (tags.access === 'private' || tags.access === 'no') return null;
-      const name = tags.name || tags['name:en'] || `Unnamed ${PLACE_TYPES[type].label.toLowerCase().replace(/s$/, '')}`;
+      const name = tags.name || tags['name:en'] || `Unnamed ${typeDef(type).label.toLowerCase().replace(/s$/, '')}`;
       return {
         id: `${e.type}/${e.id}`,
         name,

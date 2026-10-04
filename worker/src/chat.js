@@ -8,6 +8,8 @@ import { CATALOG, AIError } from './ai.js';
 
 const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 const PLACE_TYPES = ['playground', 'park', 'nature', 'library', 'museum', 'animals', 'water', 'picnic', 'market', 'treat'];
+// Venues where kids' classes happen (no timetables in map data).
+const CLASS_VENUES = ['swimming', 'dance', 'martial', 'music', 'art', 'sports', 'community'];
 
 const str = (description) => ({ type: 'string', description });
 const tool = (name, description, properties) => ({
@@ -57,8 +59,8 @@ export const TOOLS = [
     week: { type: 'string', enum: ['this', 'next'] },
     slot_id: str('The slot id'),
   }),
-  tool('find_places', "Look up free family places near the family's saved area (OpenStreetMap). Returns names and distances.", {
-    type: { type: 'string', enum: PLACE_TYPES },
+  tool('find_places', "Look up places near the family's saved area (OpenStreetMap): free family places, or venues for kids' classes (swimming, dance, martial, music, art, sports, community). Returns names, distances and websites, but not class times.", {
+    type: { type: 'string', enum: [...PLACE_TYPES, ...CLASS_VENUES] },
     radius_km: { type: 'integer', enum: [2, 5, 10, 25] },
   }),
 ];
@@ -73,6 +75,7 @@ How to work:
 - Act, don't just describe. When the parent wants something changed, call the tool, then confirm in one or two short sentences what you changed (day, date and time).
 - An event the parent mentions ("there's a pumpkin festival this Saturday, let's go"): if they gave the date and time, add it. If not, use web_search to find the official date, times and place, then add it with add_to_calendar (kind "event", repeat "once"). Say where you found the details and suggest they double-check opening times. If search doesn't give a clear date and time, ask one short question instead of guessing. Never invent event details.
 - Turn relative dates ("this Saturday", "next Sunday", "tomorrow") into exact YYYY-MM-DD dates using today's date in the app state. Planning covers Saturday and Sunday from 09:00 to 18:00. Classes can be on any day.
+- Finding classes for a child ("find a Saturday swimming class for Mia"): use find_places with the class venue type to find venues near them, then web_search for the venues' class timetables (day, time, age group). Suggest one or two options that fit the child's age and the free time in their week, with the source. Add one with add_to_calendar only once the parent says yes, or if they asked you to add it. Never invent timetables.
 - If the parent wants a weekend planned, call plan_weekend. Then, if their message gives preferences (rainy, tired, a birthday, one child poorly), adjust single slots with set_slot. Only use activity ids from the CATALOG, and only put an activity in a slot that is long enough for it.
 - If an event or class now overlaps a planned activity, the app recalculates the free slots automatically. Mention it if a planned activity was dropped.
 - If something is ambiguous (which child, which week, what time), ask one short question. Don't make several changes based on a guess.

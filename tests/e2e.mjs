@@ -29,10 +29,11 @@ page.on('pageerror', (e) => errors.push(e.message));
 // The app probes /api/health to see if a server is present; a 404 there is expected on static hosting.
 page.on('console', (m) => m.type() === 'error' && !(m.location()?.url || '').includes('/api/health') && errors.push(m.text()));
 
-await page.route('https://overpass-api.de/**', (r) => r.fulfill({ json: { elements: [
+const overpassQueries = [];
+await page.route('https://overpass-api.de/**', (r) => (overpassQueries.push(r.request().postData()), r.fulfill({ json: { elements: [
   { type: 'node', id: 11, lat: 47.607, lon: -122.333, tags: { name: 'Pioneer Square Playground', wheelchair: 'yes' } },
   { type: 'way', id: 12, center: { lat: 47.62, lon: -122.35 }, tags: { name: 'Seattle Center Playground', website: 'https://example.org' } },
-] } }));
+] } })));
 await page.route('https://api.open-meteo.com/**', (r) => r.fulfill({ json: { daily: { time: ['2026-10-10', '2026-10-11'], weather_code: [63, 0], temperature_2m_max: [12.3, 19.6], precipitation_probability_max: [85, 5] }, daily_units: { temperature_2m_max: '°C' } } }));
 await page.route('https://nominatim.openstreetmap.org/**', (r) => r.fulfill({ json: [{ lat: '51.5', lon: '-0.12', display_name: 'London, Greater London, England' }] }));
 
@@ -62,8 +63,7 @@ try {
   await page.locator('nav.tabs').getByRole('link', { name: /Weekend/ }).click();
 
   async function openClassForm() {
-    await page.locator('#classes-btn').click();
-    if (await page.locator('#sheet-body #add-class').count()) await page.locator('#sheet-body #add-class').click();
+    await page.locator('#add-class-top').click();
   }
   async function addClass({ title, kid, days, start, end, once = false }) {
     await openClassForm();
@@ -105,6 +105,19 @@ try {
   await page.getByText(/end time needs to be after/).waitFor();
   await page.locator('[data-close]').click();
   await page.screenshot({ path: `${SHOTS}/02-weekend-setup.png`, fullPage: true });
+
+  // Find classes nearby → venue list → "Add as a class" pre-fills the form
+  await page.locator('#find-classes-top').click();
+  await page.getByRole('heading', { name: 'Find classes nearby' }).waitFor();
+  await page.getByRole('button', { name: '🥋 Martial arts' }).click();
+  await page.locator('.venue').first().waitFor();
+  const q = decodeURIComponent((overpassQueries.at(-1) || '').replace(/\+/g, ' '));
+  if (!q.includes('"amenity"="dojo"')) fail('martial arts venues not queried: ' + q);
+  if (await page.getByRole('button', { name: /Ask chat for times/ }).count()) fail('chat button shown without AI');
+  await page.locator('[data-add-venue]').first().click();
+  if ((await page.inputValue('input[name=title]')) !== 'Martial arts') fail('class title not pre-filled');
+  if ((await page.inputValue('input[name=where]')) !== 'Pioneer Square Playground') fail('venue not pre-filled');
+  await page.locator('[data-close]').click();
 
   // Plan it (no server → on-device engine)
   await page.getByText('Big adventure').click();

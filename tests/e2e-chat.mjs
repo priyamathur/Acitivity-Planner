@@ -15,7 +15,7 @@ mkdirSync(SHOTS, { recursive: true });
 
 const mock = await startMockAnthropic(9913);
 writeFileSync('worker/.dev.vars', 'ANTHROPIC_API_KEY=test-key\nANTHROPIC_BASE_URL=http://127.0.0.1:9913\n');
-const dev = spawn('npx', ['wrangler', 'dev', '--port', String(PORT), '--ip', '127.0.0.1', '--var', 'CHAT_DAILY_LIMIT:6', '--persist-to', '/tmp/littleroam-chat-' + Date.now()], {
+const dev = spawn('npx', ['wrangler', 'dev', '--port', String(PORT), '--ip', '127.0.0.1', '--var', 'CHAT_DAILY_LIMIT:7', '--persist-to', '/tmp/littleroam-chat-' + Date.now()], {
   cwd: 'worker', env: { ...process.env, WRANGLER_SEND_METRICS: 'false' }, stdio: 'ignore', detached: true,
 });
 for (let i = 0; i < 60; i++) {
@@ -32,6 +32,7 @@ const page = await ctx.newPage();
 await ctx.route('https://fonts.googleapis.com/**', (r) => r.fulfill({ contentType: 'text/css', body: '' }));
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
+await page.route('https://overpass-api.de/**', (r) => r.fulfill({ json: { elements: [{ type: 'node', id: 7, lat: 47.61, lon: -122.33, tags: { name: 'Queen Anne Pool', website: 'https://example.org/pool' } }] } }));
 await page.route('https://api.open-meteo.com/**', (r) => r.fulfill({ json: { daily: { time: ['2026-10-10', '2026-10-11', '2026-10-17', '2026-10-18'], weather_code: [1, 1, 2, 63], temperature_2m_max: [17, 16, 15, 12], precipitation_probability_max: [5, 10, 20, 80] }, daily_units: { temperature_2m_max: '°C' } } }));
 await page.addInitScript(() => {
   if (localStorage.getItem('littleroam:v1')) return;
@@ -121,13 +122,27 @@ try {
   await page.getByText(/✓ Skipping Swimming on Sat,? 17 Oct/).waitFor();
   await page.screenshot({ path: `${SHOTS}/21-chat-thread.png`, fullPage: true });
 
-  // 6. Daily limit (6): message 6 works, message 7 is refused politely, and the chat recovers
+  // 6. Find a class: the chat uses the class-venue finder
+  await send('Find a Saturday morning swimming class for Mia near us');
+  await page.getByText(/The nearest pool is Queen Anne Pool \(0\.\d km\)\. Want me to look up their Saturday lessons\?/).waitFor();
+  const fp = mock.requests.at(-1).body.messages.at(-1).content[0];
+  if (!JSON.parse(fp.content).places[0].website) fail('venue website not passed to Claude');
+
+  // 7. Venue → "Ask chat for times" pre-fills the chat
+  await page.locator('nav.tabs').getByRole('link', { name: /Weekend/ }).click();
+  await page.locator('#find-classes-top').click();
+  await page.locator('[data-ask-venue]').first().click();
+  await page.locator('#chat-input').waitFor();
+  if (!(await page.inputValue('#chat-input')).startsWith('Find swimming classes for the kids at Queen Anne Pool (https://example.org/pool)')) fail('chat not pre-filled from venue');
+  await page.fill('#chat-input', '');
+
+  // 8. Daily limit (7): message 7 works, message 8 is refused politely, and the chat recovers
   await send('hello');
   await send('hello again');
-  await page.getByText(/sent today's 6 chat messages/).waitFor();
-  // Only new messages count (5 scenarios + 1 hello = 6); the many tool steps were free.
+  await page.getByText(/sent today's 7 chat messages/).waitFor();
+  // Only new messages count (6 scenarios + 1 hello = 7); the many tool steps were free.
 
-  // 7. New chat clears the thread but keeps the plan
+  // 9. New chat clears the thread but keeps the plan
   await page.getByRole('button', { name: 'New chat' }).click();
   if (await page.locator('.chat-log .bubble').count()) fail('new chat did not clear');
   await page.locator('nav.tabs').getByRole('link', { name: /Weekend/ }).click();
