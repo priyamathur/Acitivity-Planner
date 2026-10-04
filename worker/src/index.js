@@ -26,7 +26,6 @@ async function readJSON(request) {
 }
 
 const famOk = (f) => typeof f === 'string' && /^[a-z0-9-]{8,64}$/i.test(f);
-const intIn = (v, lo, hi, d) => (Number.isInteger(v) && v >= lo && v <= hi ? v : d);
 const oneOf = (v, opts, d) => (opts.includes(v) ? v : d);
 
 export default {
@@ -61,14 +60,14 @@ export default {
         if (!env.ANTHROPIC_API_KEY) return bad('AI is not enabled on this server.', 503);
         const b = await readJSON(request);
         if (!famOk(b.fam)) return bad('invalid request');
-        const question = typeof b.question === 'string' ? b.question.trim().slice(0, 400) : '';
+        const note = typeof b.note === 'string' ? b.note.trim().slice(0, 300) : '';
 
         const ip = request.headers.get('cf-connecting-ip') || 'local';
         const limit = Number(env.AI_DAILY_LIMIT || 5);
         const famKey = `f:${await sha256(b.fam)}`;
         const ipKey = `i:${await sha256(ip)}`;
         const usage = await community.consume([{ key: famKey, limit }, { key: ipKey, limit: limit * 6 }]);
-        if (!usage.ok) return json({ error: `You've used today's ${limit} free AI suggestions. The planner still works without AI, and AI is back tomorrow.`, remaining: 0 }, 429);
+        if (!usage.ok) return json({ error: `You've used today's ${limit} free AI plans. The planner still works without AI, and AI is back tomorrow.`, remaining: 0 }, 429);
 
         const ages = (Array.isArray(b.ages) ? b.ages : []).filter((a) => Number.isInteger(a) && a >= 0 && a <= 17).slice(0, 6);
         const bands = (Array.isArray(b.bands) ? b.bands : []).filter(isValidBand);
@@ -80,20 +79,35 @@ export default {
           .slice(0, 10)
           .map((p) => ({ name: p.name.slice(0, 80), type: p.type, km: Math.round(Number(p.km) * 10) / 10 || 0 }));
 
+        const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+        const toMin = (t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3));
+        const days = (Array.isArray(b.days) ? b.days : []).slice(0, 2).map((d) => ({
+          key: d?.key === 'sun' ? 'sun' : 'sat',
+          label: typeof d?.label === 'string' ? d.label.slice(0, 30) : '',
+          weather: typeof d?.weather === 'string' ? d.weather.slice(0, 80) : '',
+          booked: (Array.isArray(d?.booked) ? d.booked : []).filter((x) => typeof x === 'string').slice(0, 8).map((x) => x.slice(0, 40)),
+          windows: (Array.isArray(d?.windows) ? d.windows : [])
+            .filter((w) => w && typeof w.id === 'string' && /^(sat|sun)@\d\d:\d\d$/.test(w.id) && TIME.test(w.start) && TIME.test(w.end))
+            .map((w) => ({ id: w.id, start: w.start, end: w.end, mins: toMin(w.end) - toMin(w.start) }))
+            .filter((w) => w.mins >= 30)
+            .slice(0, 6),
+        }));
+        if (!days.some((d) => d.windows.length)) {
+          await community.refund([famKey, ipKey]);
+          return bad('There is no free time to plan this weekend.');
+        }
+
         const ctx = {
-          question,
+          note,
           ages,
-          maxMins: intIn(b.maxMins, 10, 600, 60),
-          place: oneOf(b.place, ['home', 'outside', 'out', 'any'], 'any'),
-          energy: oneOf(b.energy, ['calm', 'active', 'any'], 'any'),
-          weather: typeof b.weather === 'string' ? b.weather.slice(0, 40) : '',
+          vibe: oneOf(b.vibe, ['adventure', 'mix', 'cosy'], 'mix'),
           season: typeof b.season === 'string' ? b.season.slice(0, 12) : '',
-          when: typeof b.when === 'string' ? b.when.slice(0, 40) : '',
+          days,
           recentIds: (Array.isArray(b.recentIds) ? b.recentIds : []).filter((id) => IDS.has(id)).slice(0, 12),
           favIds: (Array.isArray(b.favIds) ? b.favIds : []).filter((id) => IDS.has(id)).slice(0, 12),
           trends,
           places,
-          maxCustom: question ? 3 : 1,
+          maxCustom: note ? 2 : 1,
         };
         try {
           const result = await suggest(env, ctx);

@@ -1,7 +1,7 @@
-// AI suggestions using the Claude API. The model picks from the curated library
-// first and may invent at most one new idea (or a few when a parent asks a
-// specific question). Every response is validated against the library and
-// clamped to safe ranges before it reaches the app.
+// AI weekend planning using the Claude API. The app works out the family's free
+// time windows around the kids' classes; the model fills each window, preferring
+// the curated library. Every response is validated against the windows and the
+// library, and clamped to safe ranges, before it reaches the app.
 import Anthropic from '@anthropic-ai/sdk';
 import { ACTIVITIES, CATEGORIES } from '../../js/data.js';
 
@@ -12,18 +12,23 @@ const CATALOG = ACTIVITIES.map((a) =>
 ).join('\n');
 
 // Frozen system prompt: identical bytes on every request, so it can be cached.
-const SYSTEM = `You are LittleRoam's family activity planner. You suggest screen-free, offline activities for children aged 0–12 that parents can start within minutes.
+const SYSTEM = `You are LittleRoam's family weekend planner. You plan screen-free, offline weekends for families with children aged 0–12, working around the classes and plans they already have.
 
 Rules:
-- Strongly prefer activities from the CATALOG below. Refer to them by their exact id.
-- Only invent a new activity ("custom") when nothing in the catalog fits well, or when the parent asks for something specific the catalog doesn't cover. Leave "activityId" empty for a custom idea.
+- You are given the FREE WINDOWS for each day (already excluding classes, travel time and lunch). Fill each window with at most one activity, using its exact window id. You may leave a window empty if the family needs rest (for example after a long class or a busy morning), but fill most of them.
+- An activity must fit in its window: its duration must not exceed the window's minutes.
+- Balance the weekend: mix outings with home time, active with calm, and avoid repeating a category back-to-back. Consider what's booked around a window: after sport, something calm; before an afternoon class, something close to home.
+- Match the family's chosen vibe: "adventure" means more trips out, "cosy" means mostly home and close by, "mix" means one outing a day and some home time.
+- Use each day's weather: on wet days choose indoor activities or rain-friendly ones.
+- Strongly prefer activities from the CATALOG below. Refer to them by their exact id. Never use the same activity twice in a weekend.
+- Only invent a new activity ("custom") when nothing in the catalog fits, or when the parent's note asks for something the catalog doesn't cover. Leave "activityId" empty for a custom idea.
 - Suggestions must be safe and age-appropriate. Include a supervision note in "tip" for anything involving water, heat, cooking, sharp tools, small parts (choking risk under 3), heights or roads.
 - Never give medical, dietary or therapeutic advice. If a question needs a professional, say so briefly in "message" and still offer gentle, safe activities.
 - "Popular near you" data is anonymous counts of families nearby. Mention it in "why" only for activities that actually appear in that data, using the exact number given. Never invent popularity, other families, events, or opening times.
 - Mention a nearby place only if it appears in the NEARBY PLACES list. Don't claim facilities (toilets, fees, hours) that aren't listed.
-- Respect the time, place, energy and weather the parent chose. Avoid activities they've seen recently unless nothing else fits.
-- "why" is one warm, specific sentence (under 25 words) on why this fits right now.
-- "message" is one short friendly sentence introducing the picks.
+- Avoid activities they've seen recently unless nothing else fits.
+- "why" is one warm, specific sentence (under 25 words) on why this fits this slot (weather, what's before or after it, the kids' ages).
+- "message" is one short friendly sentence summing up the weekend.
 - For catalog picks, fill "custom" with empty strings, zeros and empty arrays. They are ignored.
 - Use simple British/US-neutral English. No emojis except the single "emoji" field.
 
@@ -46,8 +51,9 @@ const SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['activityId', 'why', 'placeName', 'custom'],
+        required: ['windowId', 'activityId', 'why', 'placeName', 'custom'],
         properties: {
+          windowId: str,
           activityId: str,
           why: str,
           placeName: str,
@@ -74,7 +80,7 @@ const clip = (s, n) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 const clamp = (v, lo, hi, d) => (Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Math.round(Number(v)))) : d);
 const list = (a, n, len) => (Array.isArray(a) ? a.map((x) => clip(x, len)).filter(Boolean).slice(0, n) : []);
 
-export function normaliseCustom(c, uid) {
+export function normaliseCustom(c, uid, maxMins = 600) {
   const title = clip(c?.title, 70);
   const steps = list(c?.steps, 8, 220);
   if (!title || steps.length < 2) return null;
@@ -86,7 +92,7 @@ export function normaliseCustom(c, uid) {
     emoji: [...clip(c.emoji, 8)].slice(0, 2).join('') || '✨',
     cat: CATEGORIES[c.cat] ? c.cat : 'together',
     ages: [minAge, clamp(c.maxAge, minAge, 12, 12)],
-    mins: clamp(c.mins, 5, 600, 30),
+    mins: clamp(c.mins, 5, maxMins, Math.min(30, maxMins)),
     setting: ['home', 'outside', 'out'].includes(c.setting) ? c.setting : 'home',
     energy: c.energy === 'active' ? 'active' : 'calm',
     mess: clamp(c.mess, 0, 2, 1),
@@ -102,24 +108,31 @@ export function normaliseCustom(c, uid) {
 // Claims about other families are only allowed for activities that really are trending.
 const POPULARITY = /\b(popular|trending|other famil|famil(y|ies) (near|nearby|around|in your))/i;
 
-export function normalisePicks(raw, { maxCustom, placeNames, trendIds = new Set(), uid = () => crypto.randomUUID().slice(0, 8) }) {
+// Turns the model's raw JSON into the plan the app will show: at most one activity
+// per known window, no repeats, everything fitting its window.
+export function normalisePicks(raw, { maxCustom, placeNames, windows, trendIds = new Set(), uid = () => crypto.randomUUID().slice(0, 8) }) {
+  const winById = new Map(windows.map((w) => [w.id, w]));
   const out = [];
-  const seen = new Set();
+  const usedWin = new Set();
+  const usedAct = new Set();
   let customs = 0;
   for (const p of Array.isArray(raw?.picks) ? raw.picks : []) {
-    if (out.length >= 4) break;
+    const win = winById.get(p?.windowId);
+    if (!win || usedWin.has(win.id)) continue;
     const placeName = placeNames.has(p.placeName) ? p.placeName : '';
     let why = clip(p.why, 200);
     if (POPULARITY.test(why) && !trendIds.has(p.activityId)) why = '';
     if (p.activityId && byId[p.activityId]) {
-      if (seen.has(p.activityId)) continue;
-      seen.add(p.activityId);
-      out.push({ activityId: p.activityId, why, placeName });
+      if (usedAct.has(p.activityId) || byId[p.activityId].mins > win.mins) continue;
+      usedAct.add(p.activityId);
+      usedWin.add(win.id);
+      out.push({ windowId: win.id, activityId: p.activityId, why, placeName });
     } else if (!p.activityId && customs < maxCustom) {
-      const custom = normaliseCustom(p.custom, uid());
+      const custom = normaliseCustom(p.custom, uid(), win.mins);
       if (!custom) continue;
       customs++;
-      out.push({ activityId: custom.id, why, placeName, custom });
+      usedWin.add(win.id);
+      out.push({ windowId: win.id, activityId: custom.id, why, placeName, custom });
     }
   }
   return { message: clip(raw?.message, 200), picks: out };
@@ -127,14 +140,17 @@ export function normalisePicks(raw, { maxCustom, placeNames, trendIds = new Set(
 
 export function buildUserPrompt(ctx) {
   const lines = [];
-  if (ctx.question) lines.push(`PARENT'S QUESTION: ${clip(ctx.question, 400)}`);
+  if (ctx.note) lines.push(`PARENT'S NOTE: ${clip(ctx.note, 300)}`);
   lines.push(`Children's ages: ${ctx.ages.length ? ctx.ages.join(', ') : 'not given'}`);
-  lines.push(`Time available: up to ${ctx.maxMins} minutes`);
-  lines.push(`Where: ${ctx.place}`);
-  lines.push(`Energy: ${ctx.energy}`);
-  lines.push(`Now: ${ctx.when}${ctx.season ? `, ${ctx.season}` : ''}`);
-  lines.push(`Weather: ${ctx.weather || 'unknown'}`);
-  if (ctx.recentIds.length) lines.push(`Recently shown (avoid): ${ctx.recentIds.join(', ')}`);
+  lines.push(`Vibe: ${ctx.vibe}`);
+  lines.push(`Season: ${ctx.season || 'unknown'}`);
+  for (const d of ctx.days) {
+    lines.push('', `${d.label.toUpperCase()}. Weather: ${d.weather || 'unknown'}.`);
+    lines.push(`Already booked: ${d.booked.length ? d.booked.join('; ') : 'nothing'}`);
+    lines.push(`FREE WINDOWS: ${d.windows.length ? d.windows.map((w) => `[${w.id}] ${w.start}–${w.end} (${w.mins} min)`).join('; ') : 'none'}`);
+  }
+  lines.push('');
+  if (ctx.recentIds.length) lines.push(`Recently planned (avoid): ${ctx.recentIds.join(', ')}`);
   if (ctx.favIds.length) lines.push(`Family favourites: ${ctx.favIds.join(', ')}`);
   lines.push(ctx.trends.length
     ? `POPULAR NEAR YOU (last 30 days, families with kids in the same age band): ${ctx.trends.map((t) => `${t.activity} (${t.families} families)`).join('; ')}`
@@ -142,7 +158,7 @@ export function buildUserPrompt(ctx) {
   lines.push(ctx.places.length
     ? `NEARBY PLACES: ${ctx.places.map((p) => `${p.name} (${p.type}, ${p.km} km)`).join('; ')}`
     : 'NEARBY PLACES: none provided.');
-  lines.push(`Give 3 picks. Maximum ${ctx.maxCustom} custom idea(s).`);
+  lines.push(`Maximum ${ctx.maxCustom} custom idea(s).`);
   return lines.join('\n');
 }
 
@@ -184,5 +200,5 @@ export async function suggest(env, ctx) {
   } catch {
     throw new AIError('The AI returned an unexpected answer. Please try again.', 502);
   }
-  return normalisePicks(raw, { maxCustom: ctx.maxCustom, placeNames: new Set(ctx.places.map((p) => p.name)), trendIds: new Set(ctx.trends.map((t) => t.activity)) });
+  return normalisePicks(raw, { maxCustom: ctx.maxCustom, placeNames: new Set(ctx.places.map((p) => p.name)), windows: ctx.days.flatMap((d) => d.windows), trendIds: new Set(ctx.trends.map((t) => t.activity)) });
 }

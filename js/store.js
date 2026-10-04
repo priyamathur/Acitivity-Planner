@@ -6,10 +6,9 @@ const DEFAULT = {
   onboarded: false,
   family: { name: '', kids: [] }, // kids: [{ name, birthYear }]
   location: null, // { lat, lon, label }
-  week: {}, // 'YYYY-MM-DD' -> [activityId]
-  bucket: {}, // 'season:index' -> true
-  skills: {}, // 'band:index' -> true
-  traditions: [], // titles adopted
+  classes: [], // kids' classes & one-off plans: { id, title, kid, day, start, end, where, repeat, date?, skip? }
+  weekends: {}, // Saturday 'YYYY-MM-DD' -> { vibe, picks: { windowId: { id, why?, place? } }, done: { windowId: true }, message }
+  lastVibe: 'mix',
   memories: [], // { id, date, title, activityId?, note, quote, mood, photoId? }
   favs: [],
   recent: [], // last activity ids suggested/done

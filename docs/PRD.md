@@ -1,13 +1,20 @@
 # LittleRoam — Product Requirements Document
 
-**Product:** LittleRoam, a family activity planner (screen-free ideas, near-me adventures, family memories)
-**Version:** 1.0 (MVP), October 2026
+**Product:** LittleRoam, the family **weekend planner**: plans around the kids' classes, fills the free time with screen-free adventures nearby, and keeps the memories
+**Version:** 2.0 (weekend focus), October 2026
 **Owner:** Product / Founder
-**Status:** MVP live-ready. v1.1 adds the AI planner and Popular near you.
+**Status:** Built and tested. v2.0 refocuses the whole product on the weekend.
 
 > **How to read the numbers.** Every market figure below has a source and a confidence label. **[V]** means I checked it in a search result this session. **[U]** means it came from the brief or a secondary source and I could not confirm it against the primary source. My sandbox blocked access to Pinterest's newsroom, so check the **[U]** figures before you put them in a pitch deck.
 
 ---
+
+## 0. Decision log: why only the weekend (v2.0)
+v1 tried to cover every moment: daily ideas, weekly plans, bucket lists, life skills and traditions. v2 narrows to **one job: "What are we doing this weekend?"** The reasons:
+- **The pain peaks at the weekend.** The Thursday-night scramble (problem 3 below) and "things to do with kids near me" searches cluster around the weekend. A product that owns one recurring, painful moment is easier to explain, remember and recommend than a toolbox.
+- **Weekends are already half-booked.** Swimming at 9, football at 11, a birthday party at 2. No planning tool we looked at combines a family's existing class schedule with ideas for the free time. Generic idea apps ignore the schedule, and calendars don't suggest anything. So **classes are first-class in v2**: parents add them once, and the planner fills only the real free windows, with travel buffers and lunch.
+- **A natural weekly habit.** One plan a week gives a clear retention metric (planned weekends) and a natural notification moment ("Your weekend is free from 10:15, want a plan?").
+- **Removed in v2:** the daily planner bot and quick picks, the 8-day planner, seasonal bucket lists, the life-skills ladder and traditions. The idea library stays as the source for the weekend, Near me stays because weekends are when families go out, and Memories stays because weekends are when the memories happen.
 
 ## 1. Problem
 
@@ -52,21 +59,22 @@ Pinterest describes the overall theme as "thoughtful parenting": raising screen-
 | **Tinybeans / FamilyAlbum** | Private photo sharing | Tinybeans+ ~$7.99/mo or $74.99/yr [V, approx.] | Memories only. No ideas or planning. |
 | **Google Maps / Yelp** | Places | Free | Not kid-aware. Paid attractions and ads dominate. |
 | **Local "mommy blogs"/ event sites** | Hyper-local events | Free, ad-heavy | Fragmented, often stale, not personalised. |
+| **Family calendars (Google/Apple Calendar, Cozi-style apps)** | Holding the class schedule | Free / subscription (not verified) | They store what's booked but never suggest how to use the free time. |
 
-**The gap LittleRoam fills:** no single product closes the **plan → do → remember** loop for **ages 2–12**, combining:
-1. Personalised screen-free ideas (age × time × place × energy × weather)
-2. **Free** local places nearby, paired with an activity that turns a playground trip into an adventure
-3. Short-term plans (today, this weekend) **and** long-term ones (seasonal bucket lists, life-skills ladders, traditions)
+**The gap LittleRoam fills:** in the products above, I found none that plans a family's **weekend around the classes they already have**. LittleRoam closes the **plan → do → remember** loop for **ages 2–12**, combining:
+1. **The real schedule:** the kids' classes and one-off plans, with travel buffers and lunch
+2. Personalised screen-free ideas for each free window (age × window length × weather forecast × vibe)
+3. **Free** local places nearby, and what families with kids the same age enjoyed nearby
 4. A **private, non-social** memory journal: no likes, no followers, no streak-shaming
 
-Development apps stop at age 3–4, photo apps don't plan, and Pinterest doesn't personalise or follow through. LittleRoam is the connective tissue between them.
+Calendars know the schedule but don't suggest anything. Idea apps suggest things but ignore the schedule. Development apps stop at age 3–4, and Pinterest doesn't personalise or follow through. This is based on a limited scan, so do a deeper competitor check before fundraising.
 
 ## 4. Target users
 
 ### Primary persona: "The Intentional Weekend Planner"
-- **Who:** A parent aged 28–42 with 1–3 kids aged **2–8**. Urban or suburban, often dual-income.
-- **Behaviour:** Uses Pinterest and Instagram for ideas. Searches "things to do with kids near me" most weekends. Feels guilty about screen time, and is short on time and energy.
-- **Job to be done:** *"When I have a free afternoon or weekend, help me pick something meaningful my kids will love, that fits our time and the weather, without scrolling for 30 minutes."*
+- **Who:** A parent aged 28–42 with 1–3 kids aged **2–10**. Urban or suburban, often dual-income. The kids have 1–3 weekend classes (sport, music, faith, tutoring).
+- **Behaviour:** Uses Pinterest and Instagram for ideas. Searches "things to do with kids near me" most weekends. Juggles the class schedule in their head or in a shared calendar. Feels guilty about screen time, and is short on time and energy.
+- **Job to be done:** *"Every week, help me plan a weekend around the classes we already have, filling the gaps with something meaningful the kids will love that fits the weather, without scrolling for 30 minutes."*
 - **Success:** They get a plan in under a minute, get off the phone, and save a memory afterwards.
 
 ### Secondary personas
@@ -86,35 +94,35 @@ Development apps stop at age 3–4, photo apps don't plan, and Pinterest doesn't
 4. **Gentle, not gamified.** Progress bars yes, streak guilt no. Every empty state reassures ("Free day, leave room for boredom").
 5. **Safety woven in.** Supervision notes on water, heat and choking-risk activities.
 
-## 6. MVP scope (built)
+## 6. Scope (built, v2.0)
 
-| # | Feature | Short or long term | Status |
-|---|---|---|---|
-| F1 | **Planner bot (Today):** 3 tap-only questions (time, place, energy), then 3 diverse ideas scored by kids' ages, live weather, freshness and favourites. "Show me others" reshuffles. | Short | ✅ |
-| F2 | **Quick picks:** rainy-day rescue, 15 minutes before dinner, plan my weekend, near me | Short | ✅ |
-| F3 | **Near me:** GPS or city/postcode. 10 categories: playgrounds, parks, nature and trails, libraries, museums, zoos and aquariums, beaches and splash pads, picnic spots, farms and markets, ice cream. Shows distance, free entry, toilets and accessibility where tagged. Directions link. Each category is paired with an activity. | Short | ✅ |
-| F4 | **Idea library:** 58 activities across 7 categories (sensory, nature, life skills, STEM, art, movement, connection). Each has materials, steps, skills learned, mess level and safety tips. Search, filters, favourites. | Both | ✅ |
-| F5 | **Weekly plan:** 8-day planner. Auto-plan the weekend. Add any idea to a day. Mark done to save a memory. | Short | ✅ |
-| F6 | **Seasonal bucket lists:** 4 seasons × 10 items with progress | Long | ✅ |
-| F7 | **Life-skills ladder:** 4 age bands, 27 skills, opens to your kids' ages | Long | ✅ |
-| F8 | **Family traditions:** 6 traditions you can adopt (weekly, monthly, seasonal, yearly) | Long | ✅ |
-| F9 | **Memories:** title, date, mood, note, "something they said", and a photo (compressed, stored on the device). Monthly timeline, stats, "Our year so far" recap. | Long | ✅ |
-| F10 | **Shareable activity links** (`#a/<id>`) with native share. This is the viral loop. | Growth | ✅ |
-| F11 | **Installable PWA:** works offline (except live maps and weather), home-screen icon, shortcuts | Platform | ✅ |
-| F12 | **Backup:** JSON export and import. Erase all. | Trust | ✅ |
-| F13 | **Plus pricing page:** shows planned pricing and captures interest. **No payments yet.** | Monetisation | ✅ (stub) |
+| # | Feature | Status |
+|---|---|---|
+| F1 | **Weekend tab (home):** this weekend or next weekend. On a Sunday, Saturday shows as over. | ✅ |
+| F2 | **Kids' classes and one-off plans:** title, which child (or everyone), Saturday or Sunday, start and end time, place. Repeats weekly or "this weekend only". Weekly classes can be skipped for one date (holidays). An emoji and type are assigned automatically (🏊 Swimming, ⚽ Football, 🩰 Dance, 🎉 Party…). | ✅ |
+| F3 | **Free-window engine:** 09:00–18:00 days, with 15-minute travel buffers around classes and a 12:30–13:30 lunch break. Windows under 45 minutes are dropped. | ✅ |
+| F4 | **Plan our weekend:** pick a vibe (🗺️ Big adventure / ⚖️ A bit of both / 🛋️ Cosy & slow). Each free window gets one activity that fits its length, the day's forecast (rain → indoor or rain-friendly) and the kids' ages, with no repeats across the weekend. | ✅ |
+| F5 | **Timeline per day:** classes, lunch and planned activities in time order, with the weather forecast. Per slot: ✅ We did it (saves a memory dated that day), 🔄 Swap, ✕ Remove, "add something" for an empty window. | ✅ |
+| F6 | **Send to my partner:** the whole weekend as a text (native share sheet or clipboard). | ✅ |
+| F7 | **✨ AI weekend planning** (with server): Claude fills the windows given the bookings around them, the weather, the vibe, nearby places, local trends and an optional note ("Grandma visits Sunday lunch"). Empty windows fall back to the on-device engine. | ✅ |
+| F8 | **👨‍👩‍👧 Popular with families near you** (with server): anonymous, opt-in, k-anonymous | ✅ |
+| F9 | **Near me:** free playgrounds, parks, trails, libraries and more (OpenStreetMap). Named places feed the AI plan. | ✅ |
+| F10 | **Idea library:** 58 activities. "Add to our weekend" picks a free slot this weekend or next. | ✅ |
+| F11 | **Memories:** private journal with photos, a "weekends with an adventure" count and a yearly recap | ✅ |
+| F12 | **Installable PWA**, shareable activity links, backup export/import | ✅ |
+| F13 | **Plus pricing page** (interest only, no payments) | ✅ (stub) |
 
-| F14 | **✨ AI planner (v1.1):** Claude chooses from the curated library using kids' ages, time, place, energy, weather, nearby places and local trends. Each pick comes with a "why". Parents can also ask free-form questions; for those, AI may write up to 3 new ideas. If AI is unavailable, the app falls back to the on-device engine. | Both | ✅ |
-| F15 | **👨‍👩‍👧 Popular with families near you (v1.1):** anonymous, opt-in counts of what families with kids in the same age band did within ~15 km over the last 30 days | Short | ✅ |
-
-### Not in MVP (next)
-- Cloud accounts, sync and family sharing
+### Not built yet (next)
+- **Calendar sync:** import classes from, and export the plan to, Google or Apple Calendar (Plus)
+- **Per-child plans:** today a class blocks the whole family's time. Next, let a parent take one child to football while the other parent does something with the sibling.
+- Thursday-evening reminder ("Your weekend has 4 free slots, want a plan?")
+- Cloud accounts, sync and a shared family plan
 - Popular *places* nearby, not just activities. This needs extra privacy review, because place visits are location traces.
 - Local **events** (story-times, festivals). Needs licensed event feeds or partnerships.
-- Printable memory book, push reminders ("Saturday looks sunny, want a plan?")
+- Printable memory book
 - Native Play Store and App Store builds
 
-## 6a. AI planner and "Popular near you" (v1.1)
+## 6a. AI weekend planning and "Popular near you"
 
 ### Why AI here, and how it differs from a general chatbot
 The AI is grounded in three things a chatbot doesn't have:
@@ -127,7 +135,9 @@ The server validates every answer:
 - It removes popularity claims the data doesn't support.
 - It clamps AI-written ideas to safe ranges.
 
-Parents never write a prompt; three taps are enough. Free-form "Ask" covers the long tail ("a calm idea for a 4-year-old with a broken arm"). This is the gap the rules engine couldn't fill.
+The app works out the free windows itself, so the AI only decides **what goes in each one**. The server rejects any pick for a window it wasn't given, and any activity that doesn't fit its window. Class titles are reduced to a generic type ("Swimming 09:00–10:00") before anything is sent, so a child's name in a title never reaches the AI.
+
+Parents never write a prompt: choose a vibe and tap. The optional note covers the long tail ("Grandma visits Sunday lunch", "Mia has a broken arm"), which the rules engine couldn't handle.
 
 ### Privacy and anti-comparison design
 Showing "what others are doing" sits in tension with principle 2 (no comparison anxiety). The design resolves it like this:
@@ -138,10 +148,10 @@ Showing "what others are doing" sits in tension with principle 2 (no comparison 
 - **Honest cold start.** When a neighbourhood has too little data, the app says so. We never show seeded or fake "families near you" data.
 
 ### Cost and pricing implications
-These figures are estimates; check them against `usage` in production. Each suggestion sends roughly 3k input tokens (the system prompt with the 58-item catalogue, plus context) and gets back about 0.5–1.5k output tokens. With Claude Opus 5.5 ($4 / $20 per million tokens), that is about **$0.02–0.04 per suggestion**.
+These figures are estimates; check them against `usage` in production. One weekend plan sends roughly 3.5k input tokens (the system prompt with the 58-item catalogue, plus the weekend) and gets back about 1–2k output tokens. With Claude Opus 5.5 ($4 / $20 per million tokens), that is about **$0.03–0.05 per weekend plan**.
 
-At 1,000 families using AI twice a day, that comes to roughly $40–80/day. For that reason:
-- Free users get a small daily allowance (`AI_DAILY_LIMIT`, default 5). Unlimited AI is a core **Plus** feature.
+The weekend focus helps cost: a family typically needs **one AI plan a week**, not several a day. At 10,000 weekly families that is roughly $300–500 a week. For that reason:
+- Free users get a small daily allowance (`AI_DAILY_LIMIT`, default 5). Swaps use the free on-device engine. Unlimited AI re-plans are a **Plus** feature.
 - The model is one setting (`AI_MODEL`). Cheaper models (Claude Sonnet 5.5 at $2 / $10, Claude Haiku 4.5 at $1 / $5) can be tested against an eval set before switching.
 - The cold-start problem for Popular near you is real. Launch city by city (parent groups, libraries) so neighbourhoods cross the threshold quickly.
 
@@ -173,8 +183,8 @@ The goal is **wide adoption**, and the core value (ideas, near me, memories on t
 
 | Plan | Price | Includes |
 |---|---|---|
-| **Free** | $0 | Planner bot, quick picks, near me, full idea library, weekly plan, bucket lists, life skills, traditions, memories on the device, backup export |
-| **LittleRoam Plus** | **$4.99/mo or $34.99/yr** (~42% off monthly). **14-day free trial.** One subscription covers the whole family. | Cloud backup and photo sync. Share with a partner and grandparents. Personalised AI planner. Seasonal adventure packs. Local events. Printable memory book and yearly recap. |
+| **Free** | $0 | Weekend planner around your classes, swaps, near me, full idea library, a few AI plans, Popular near you, memories on the device, backup export |
+| **LittleRoam Plus** | **$4.99/mo or $34.99/yr** (~42% off monthly). **14-day free trial.** One subscription covers the whole family. | Unlimited AI weekend plans. Google/Apple Calendar sync for classes. A shared family plan (partner, grandparents). Local weekend events. Cloud backup and photo sync. Printable memory book. |
 | **Founding family** (launch only) | $59 lifetime, first 1,000 families | Everything in Plus, forever. Funds the early runway and rewards evangelists. |
 | **Later: Caregiver/Pro** | ~$9.99/mo | Multiple families, daily rotation, printable plans for nannies, childminders and homeschool co-ops |
 
@@ -193,21 +203,23 @@ The goal is **wide adoption**, and the core value (ideas, near me, memories on t
 
 | Stage | Metric | MVP target (hypotheses to validate) |
 |---|---|---|
-| Activation | % of new users who get a plan in session 1 | > 60% |
-| Time to plan | median time from open to 3 ideas | < 45 s |
+| Activation | % of new users who add a class and plan a weekend in session 1 | > 50% |
+| Time to plan | median time from open to a full weekend plan | < 60 s |
+| North star | **planned weekends per family per month** | > 2.5 |
 | Follow-through | % of users who save at least one memory in week 1 | > 20% |
-| Retention | W4 retention | > 20% |
+| Retention | % of families who plan again the following weekend / 4 weeks later | > 40% / > 20% |
 | Virality | shares per weekly active user | > 0.3 |
 | Monetisation (post-Plus) | free → trial / trial → paid | 5% / 35% |
 
 These are my starting hypotheses, not industry benchmarks. Instrument privacy-friendly analytics (e.g. Plausible) before treating any of them as real.
 
 ## 10. Go-to-market (first 90 days)
-1. **Pinterest-native SEO:** every activity has a shareable URL. Pin 58 idea cards plus seasonal bucket lists as boards ("Autumn bucket list for toddlers").
-2. **Parent communities:** local parent Facebook groups, Reddit r/Parenting and r/toddlers (follow each community's self-promotion rules), school WhatsApp groups. The hook: "free, no-ads, no-login near-me planner".
-3. **Libraries and pediatric offices:** a QR poster ("Rainy day? Scan for 58 screen-free ideas").
-4. **Seasonal moments:** summer break ("no phone summer"), half-terms, winter holidays.
-5. **Referral:** at Plus launch, give a free month for each family invited.
+1. **Own Thursday night:** content and (later) a reminder timed for when weekend planning happens. "Plan your weekend in 60 seconds" is the hook.
+2. **Pinterest-native SEO:** every activity has a shareable URL. Pin the 58 idea cards as boards ("Rainy weekend ideas for toddlers").
+3. **Parent communities:** local parent Facebook groups, Reddit r/Parenting and r/toddlers (follow each community's self-promotion rules), school WhatsApp groups. The hook: "free, no-ads, no-login near-me planner".
+4. **Where weekend classes happen:** QR posters at swimming pools, leisure centres and libraries ("Waiting at swimming? Plan the rest of your weekend"). This is high intent and a natural partnership.
+5. **Seasonal moments:** summer break ("no phone summer"), half-terms, winter holidays.
+6. **Referral:** at Plus launch, give a free month for each family invited.
 
 ## 11. Risks and mitigations
 | Risk | Mitigation |
@@ -218,10 +230,11 @@ These are my starting hypotheses, not industry benchmarks. Instrument privacy-fr
 | Safety of activities | Supervision tips in the content. Later: expert review of all content. |
 | The name "LittleRoam" may be trademarked or similar to existing marks | Run a trademark and app-store name search before marketing spend. |
 | Plus demand is unproven | The interest button measures intent before building payments. |
+| Narrowing to weekends shrinks the use case | The weekend is the peak-pain moment. School holidays ("plan the half-term") can reuse the same engine later without losing focus. |
 
 ## 12. Roadmap
 - **Week 1–2:** analytics, waitlist form (set `WAITLIST_URL`), 25 more activities, PWA install prompt
-- **Month 1:** Supabase auth and sync. Family sharing. Stripe for Plus. Reminders.
+- **Month 1:** calendar import for classes, Thursday reminder, shared family plan, Stripe for Plus
 - **Month 2:** Play Store (TWA), AI eval set and model/cost tuning, local events pilot in 1–2 cities
 - **Month 3:** printable memory book, B2B library pilot
 

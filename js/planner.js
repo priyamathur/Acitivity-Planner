@@ -1,26 +1,6 @@
 // Pure recommendation engine — no DOM, so it can be unit-tested in Node.
 import { ACTIVITIES, SEASONS } from './data.js';
 
-export const TIME_OPTIONS = [
-  { id: 'quick', label: '15–30 min', max: 30 },
-  { id: 'hour', label: 'About an hour', max: 60 },
-  { id: 'half', label: 'Half a day', max: 180 },
-  { id: 'full', label: 'All day', max: 600 },
-];
-
-export const PLACE_OPTIONS = [
-  { id: 'home', label: 'At home' },
-  { id: 'outside', label: 'Outside, close by' },
-  { id: 'out', label: 'Go somewhere' },
-  { id: 'any', label: 'Surprise me' },
-];
-
-export const ENERGY_OPTIONS = [
-  { id: 'calm', label: 'Calm & cosy' },
-  { id: 'active', label: 'Burn energy' },
-  { id: 'any', label: 'Either' },
-];
-
 export function currentSeason(date = new Date()) {
   const m = date.getMonth();
   return Object.keys(SEASONS).find((k) => SEASONS[k].months.includes(m));
@@ -90,14 +70,6 @@ export function recommend(ctx, { count = 3, seed = Date.now(), pool = ACTIVITIES
   return out;
 }
 
-// Weekend plan: one "out" adventure + one home activity per day.
-export function planWeekend(ctx, seed = Date.now()) {
-  const sat = [...recommend({ ...ctx, place: 'out', maxMins: 180 }, { count: 1, seed }), ...recommend({ ...ctx, place: 'home', maxMins: 60 }, { count: 1, seed: seed + 1 })];
-  const used = sat.map((a) => a.id);
-  const sun = [...recommend({ ...ctx, place: 'outside', maxMins: 120, recentIds: [...(ctx.recentIds || []), ...used] }, { count: 1, seed: seed + 2 }), ...recommend({ ...ctx, place: 'home', maxMins: 60, recentIds: [...(ctx.recentIds || []), ...used] }, { count: 1, seed: seed + 3 })];
-  return { sat, sun };
-}
-
 export function ageFromBirthYear(year, now = new Date()) {
   return Math.max(0, now.getFullYear() - Number(year));
 }
@@ -131,4 +103,118 @@ export function haversineKm(a, b) {
   const dLon = toRad(b.lon - a.lon);
   const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLon / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+// ======================= Weekend planning =======================
+
+export const VIBES = {
+  adventure: { label: 'Big adventure', emoji: '🗺️', desc: 'Get out and explore' },
+  mix: { label: 'A bit of both', emoji: '⚖️', desc: 'One outing, one cosy time' },
+  cosy: { label: 'Cosy & slow', emoji: '🛋️', desc: 'Mostly home and close by' },
+};
+
+export const DAY = { start: 9 * 60, end: 18 * 60, lunch: [12 * 60 + 30, 13 * 60 + 30] };
+const BUFFER = 15; // travel/transition time around a class
+const MIN_WINDOW = 45;
+
+export const toMin = (hhmm) => {
+  const [h, m] = String(hhmm).split(':').map(Number);
+  return h * 60 + (m || 0);
+};
+export const fmtTime = (mins) => `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+
+const iso = (d) => {
+  const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+  return z.toISOString().slice(0, 10);
+};
+
+// The weekend to plan. On a Saturday or Sunday "this weekend" is the current one
+// (days already over are marked past); otherwise it's the coming one.
+export function weekendDays(now = new Date(), offset = 0) {
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dow = d.getDay(); // 0 Sun … 6 Sat
+  const sat = new Date(d);
+  sat.setDate(d.getDate() + (dow === 0 ? -1 : 6 - dow) + offset * 7);
+  const sun = new Date(sat);
+  sun.setDate(sat.getDate() + 1);
+  const today = iso(d);
+  return [
+    { key: 'sat', name: 'Saturday', date: iso(sat), past: iso(sat) < today },
+    { key: 'sun', name: 'Sunday', date: iso(sun), past: iso(sun) < today },
+  ];
+}
+
+// Classes and one-off plans that happen on this day.
+// class: { id, title, kid, day: 'sat'|'sun', start: 'HH:MM', end: 'HH:MM', where, repeat: 'weekly'|'once', date?, skip?: {date: true} }
+export function bookedFor(classes, day) {
+  return classes
+    .filter((c) => c.day === day.key && (c.repeat === 'once' ? c.date === day.date : !c.skip?.[day.date]))
+    .map((c) => ({ ...c, s: toMin(c.start), e: toMin(c.end) }))
+    .filter((c) => c.e > c.s)
+    .sort((a, b) => a.s - b.s);
+}
+
+// Free time between classes (with a buffer around each), split at lunch.
+export function freeWindows(booked, dayKey) {
+  const busy = booked.map((b) => [b.s - BUFFER, b.e + BUFFER]);
+  busy.push(DAY.lunch);
+  busy.sort((a, b) => a[0] - b[0]);
+  const out = [];
+  let cur = DAY.start;
+  for (const [s, e] of busy) {
+    if (s - cur >= MIN_WINDOW) out.push([cur, s]);
+    cur = Math.max(cur, e);
+  }
+  if (DAY.end - cur >= MIN_WINDOW) out.push([cur, DAY.end]);
+  return out
+    .map(([s, e]) => [Math.max(s, DAY.start), Math.min(e, DAY.end)])
+    .filter(([s, e]) => e - s >= MIN_WINDOW)
+    .map(([s, e]) => ({ id: `${dayKey}@${fmtTime(s)}`, day: dayKey, start: fmtTime(s), end: fmtTime(e), mins: e - s, part: s < DAY.lunch[0] ? 'morning' : 'afternoon' }));
+}
+
+// What kind of activity suits a window, given the vibe and weather.
+export function windowPlace(win, vibe, weather) {
+  if (vibe === 'cosy') return win.part === 'morning' && weather !== 'wet' ? 'outside' : 'home';
+  if (vibe === 'adventure') return win.part === 'morning' || win.mins >= 150 ? 'out' : 'outside';
+  return win.part === 'morning' ? 'out' : 'home';
+}
+
+// One activity per free window, no repeats across the weekend.
+// days: [{ key, weather, windows }]
+export function fillWeekend(days, { ages = [], vibe = 'mix', recentIds = [], favIds = [] } = {}, seed = Date.now()) {
+  const used = [];
+  const picks = {};
+  let n = 0;
+  for (const day of days) {
+    for (const win of day.windows) {
+      const base = { ages, maxMins: win.mins, weather: day.weather, recentIds: [...recentIds, ...used], favIds };
+      const place = windowPlace(win, vibe, day.weather);
+      let [a] = recommend({ ...base, place, energy: win.part === 'morning' ? 'active' : 'any' }, { count: 1, seed: seed + n++ }).filter((x) => !used.includes(x.id));
+      if (!a) [a] = recommend({ ...base, place: 'any', energy: 'any' }, { count: 1, seed: seed + n++ }).filter((x) => !used.includes(x.id));
+      if (!a) continue;
+      used.push(a.id);
+      picks[win.id] = { id: a.id };
+    }
+  }
+  return picks;
+}
+
+// A replacement for one window that isn't already in the plan.
+export function swapPick(day, win, { ages = [], vibe = 'mix', exclude = [], favIds = [] } = {}, seed = Date.now()) {
+  const base = { ages, maxMins: win.mins, weather: day.weather, recentIds: exclude, favIds };
+  const pool = [...recommend({ ...base, place: windowPlace(win, vibe, day.weather) }, { count: 6, seed }), ...recommend({ ...base, place: 'any' }, { count: 6, seed: seed + 1 })];
+  return pool.find((a) => !exclude.includes(a.id)) || null;
+}
+
+// A friendly label for a class, also the only part of a class we send to the AI.
+const CLASS_KINDS = [
+  [/\b(party|birthday)/i, '🎉', 'Party'], [/swim/i, '🏊', 'Swimming'], [/\b(foot ?ball|soccer)/i, '⚽', 'Football'], [/basketball/i, '🏀', 'Basketball'],
+  [/tennis/i, '🎾', 'Tennis'], [/ballet|danc/i, '🩰', 'Dance'], [/\bgym|tumbl/i, '🤸', 'Gymnastics'], [/karate|judo|taekwondo|martial/i, '🥋', 'Martial arts'],
+  [/piano|music|violin|guitar|\bsing|choir/i, '🎹', 'Music'], [/\b(art|arts|draw|drawing|paint|painting|pottery)\b/i, '🎨', 'Art'], [/\bchess/i, '♟️', 'Chess'],
+  [/\b(coding|code|robotics?|stem|science)\b/i, '💻', 'STEM'], [/drama|theat(re|er)/i, '🎭', 'Drama'],
+  [/church|temple|mosque|sunday school/i, '🕊️', 'Faith'], [/tutor|\bmaths?\b|reading|language|school|lesson/i, '📚', 'Lesson'],
+];
+export function classKind(title) {
+  const k = CLASS_KINDS.find(([re]) => re.test(title));
+  return k ? { emoji: k[1], kind: k[2] } : { emoji: '📌', kind: 'Booked' };
 }

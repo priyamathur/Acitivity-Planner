@@ -1,14 +1,17 @@
-# 🌱 LittleRoam: Family Activity Planner
+# 🌱 LittleRoam: Family Weekend Planner
 
-LittleRoam helps parents plan screen-free activities, find free things to do nearby, and keep a private record of family memories. It's an installable web app (PWA) with no login and no ads, and your data stays on your device.
+LittleRoam plans your family's weekend in about a minute. You add the kids' classes (swimming, football, ballet, a birthday party), and it fills the free time with screen-free adventures that fit the weather. It's an installable web app (PWA) with no login and no ads, and your data stays on your device.
 
-- **Today:** a planner bot asks 3 tap-only questions and suggests 3 ideas matched to your kids' ages, the time you have and today's weather.
-- **Near me:** free playgrounds, parks, trails, libraries, museums and more nearby, using OpenStreetMap data.
-- **Ideas:** 58 activities (sensory, nature, life skills, STEM, art, movement, connection).
-- **Plans:** this week, seasonal bucket lists, a life-skills ladder by age, and family traditions.
-- **Memories:** a private journal with photos, quotes, mood and a yearly recap.
-- **✨ AI planner** (needs the server): Claude picks from the library based on your kids' ages, time, weather, nearby places and what's popular nearby. Parents can also ask a free-form question ("a calm idea for a 4-year-old with a cold").
-- **👨‍👩‍👧 Popular with families near you** (needs the server): an anonymous, opt-in count of what families with kids the same age did nearby in the last 30 days.
+- **Weekend:** this weekend or next, laid out as a timeline per day.
+  - Classes and one-off plans sit at their real times, with 15-minute travel buffers and a lunch break.
+  - Each free window gets one activity that fits its length, the forecast, your kids' ages and the vibe you choose (🗺️ Big adventure / ⚖️ A bit of both / 🛋️ Cosy & slow).
+  - Per slot you can swap it, remove it, or tap ✅ We did it to save a memory.
+  - **Send to my partner** shares the whole weekend as text.
+- **Near me:** free playgrounds, parks, trails, libraries and more nearby (OpenStreetMap).
+- **Ideas:** 58 activities; "Add to our weekend" drops one into a free slot.
+- **Memories:** a private journal with photos, quotes and a yearly recap.
+- **✨ AI planning** (needs the server): Claude fills the free windows using the bookings around them, the weather, nearby places, what's popular nearby, and an optional note ("Grandma visits Sunday lunch").
+- **👨‍👩‍👧 Popular with families near you** (needs the server): an anonymous, opt-in count of what families with kids the same age did nearby.
 
 📄 Product strategy, market research and pricing: [docs/PRD.md](docs/PRD.md)
 
@@ -50,8 +53,8 @@ One-time setup: **Settings → Pages → Build and deployment → Source: GitHub
 ## Privacy design
 - No accounts. Plans, memories and photos stay on the device.
 - **Popular near you** is opt-in each time a memory is saved. It sends only the activity id, the kids' age bands and a coarse ~5 km grid cell. The app never sends coordinates, names, notes or photos. The server only shows an activity once `MIN_FAMILIES` distinct families have shared it.
-- **AI** receives the question, the kids' ages, the time, place, energy and weather settings, up to 10 nearby place names, and the area's anonymous trend counts. Every response is checked on the server:
-  - unknown activity ids are dropped
+- **AI** receives the optional note, the kids' ages, the vibe, the free windows, **class types and times only** (e.g. "Swimming 09:00–10:00", never the class title or a child's name), the weather, up to 10 nearby place names and the area's anonymous trend counts. Every response is checked on the server:
+  - unknown activity ids, unknown windows and activities too long for their window are dropped
   - places the app didn't provide are removed
   - popularity claims not backed by real data are removed
   - AI-written ideas are clamped to safe ranges and labelled "AI idea"
