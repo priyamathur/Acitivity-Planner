@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ACTIVITIES, CATEGORIES, BUCKET_LISTS, SEASONS } from '../js/data.js';
-import { recommend, planWeekend, score, weatherBucket, currentSeason, haversineKm } from '../js/planner.js';
+import { ACTIVITIES, CATEGORIES } from '../js/data.js';
+import { recommend, score, weatherBucket, currentSeason, haversineKm, weekendDays, bookedFor, freeWindows, fillWeekend, swapPick, classKind } from '../js/planner.js';
 import { buildQuery, parsePlaces, PLACE_TYPES } from '../js/near.js';
 
 test('activity library is well-formed', () => {
@@ -17,7 +17,6 @@ test('activity library is well-formed', () => {
   }
   assert.ok(ACTIVITIES.length >= 50);
   for (const t of Object.values(PLACE_TYPES)) if (t.pair) assert.ok(ids.has(t.pair), `missing pair ${t.pair}`);
-  for (const k of Object.keys(SEASONS)) assert.equal(BUCKET_LISTS[k].length, 10);
 });
 
 test('recommend respects time, place and age constraints', () => {
@@ -44,13 +43,73 @@ test('wet weather excludes dry-only outdoor activities', () => {
   assert.equal(score(dryOutdoor, { weather: 'wet' }), -Infinity);
 });
 
-test('planWeekend returns two items per day with no repeats', () => {
-  const { sat, sun } = planWeekend({ ages: [5] }, 42);
-  assert.equal(sat.length, 2);
-  assert.equal(sun.length, 2);
-  assert.equal(sat[0].setting, 'out');
-  const ids = [...sat, ...sun].map((a) => a.id);
-  assert.equal(new Set(ids).size, 4);
+test('weekendDays picks the right Saturday and Sunday', () => {
+  // Wednesday 7 Oct 2026 → 10–11 Oct
+  assert.deepEqual(weekendDays(new Date(2026, 9, 7)).map((d) => [d.date, d.past]), [['2026-10-10', false], ['2026-10-11', false]]);
+  // Saturday → today and tomorrow
+  assert.deepEqual(weekendDays(new Date(2026, 9, 10)).map((d) => [d.date, d.past]), [['2026-10-10', false], ['2026-10-11', false]]);
+  // Sunday → Saturday is over
+  assert.deepEqual(weekendDays(new Date(2026, 9, 11)).map((d) => [d.date, d.past]), [['2026-10-10', true], ['2026-10-11', false]]);
+  // Next weekend
+  assert.equal(weekendDays(new Date(2026, 9, 11), 1)[0].date, '2026-10-17');
+});
+
+const classes = [
+  { id: 'a', title: 'Swimming', kid: '0', day: 'sat', start: '09:00', end: '10:00', repeat: 'weekly' },
+  { id: 'b', title: 'Birthday party', kid: '', day: 'sat', start: '14:00', end: '16:00', repeat: 'once', date: '2026-10-10' },
+  { id: 'c', title: 'Ballet', kid: '1', day: 'sun', start: '10:00', end: '11:00', repeat: 'weekly', skip: { '2026-10-11': true } },
+];
+
+test('classes: weekly, one-off and skipped weeks', () => {
+  const [sat, sun] = weekendDays(new Date(2026, 9, 7));
+  assert.deepEqual(bookedFor(classes, sat).map((c) => c.id), ['a', 'b']);
+  assert.deepEqual(bookedFor(classes, sun).map((c) => c.id), [], 'ballet skipped this week');
+  const [sat2, sun2] = weekendDays(new Date(2026, 9, 7), 1);
+  assert.deepEqual(bookedFor(classes, sat2).map((c) => c.id), ['a'], 'party was one-off');
+  assert.deepEqual(bookedFor(classes, sun2).map((c) => c.id), ['c']);
+});
+
+test('free windows go around classes (with travel buffer) and lunch', () => {
+  const [sat] = weekendDays(new Date(2026, 9, 7));
+  const w = freeWindows(bookedFor(classes, sat), 'sat');
+  assert.deepEqual(w.map((x) => [x.start, x.end, x.mins, x.part]), [['10:15', '12:30', 135, 'morning'], ['16:15', '18:00', 105, 'afternoon']]);
+  assert.deepEqual(freeWindows([], 'sun').map((x) => x.id), ['sun@09:00', 'sun@13:30']);
+});
+
+test('fillWeekend: one fitting activity per window, no repeats, weather-aware', () => {
+  const days = [
+    { key: 'sat', weather: 'wet', windows: freeWindows([], 'sat') },
+    { key: 'sun', weather: 'dry', windows: freeWindows([], 'sun') },
+  ];
+  for (let seed = 1; seed < 30; seed++) {
+    const picks = fillWeekend(days, { ages: [5], vibe: 'adventure' }, seed);
+    const ids = Object.values(picks).map((p) => p.id);
+    assert.equal(ids.length, 4);
+    assert.equal(new Set(ids).size, 4);
+    for (const day of days) for (const w of day.windows) {
+      const a = ACTIVITIES.find((x) => x.id === picks[w.id].id);
+      assert.ok(a.mins <= w.mins, `${a.id} fits ${w.id}`);
+      if (day.weather === 'wet') assert.ok(!(a.weather === 'dry' && a.setting !== 'home'), `${a.id} is rain-friendly`);
+    }
+  }
+  const cosy = fillWeekend(days, { ages: [5], vibe: 'cosy' }, 3);
+  assert.ok(Object.values(cosy).every((p) => ACTIVITIES.find((x) => x.id === p.id).setting !== 'out'), 'cosy weekend stays close to home');
+});
+
+test('swapPick returns a different fitting activity', () => {
+  const day = { key: 'sun', weather: 'dry', windows: freeWindows([], 'sun') };
+  const w = day.windows[0];
+  const a = swapPick(day, w, { ages: [5], vibe: 'mix', exclude: ['hike', 'scavenger'] }, 9);
+  assert.ok(a && !['hike', 'scavenger'].includes(a.id) && a.mins <= w.mins);
+});
+
+test('classKind gives a generic label (what the AI sees)', () => {
+  assert.deepEqual(classKind("Mia's swimming lesson"), { emoji: '🏊', kind: 'Swimming' });
+  assert.equal(classKind('U7 Football').kind, 'Football');
+  assert.equal(classKind('Something else').kind, 'Booked');
+  assert.equal(classKind("Sam's birthday party").kind, 'Party', 'party is not Art');
+  assert.equal(classKind('Art club').kind, 'Art');
+  assert.equal(classKind('Solar system talk').kind, 'Booked', 'system is not STEM');
 });
 
 test('weather codes and seasons', () => {

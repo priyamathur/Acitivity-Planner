@@ -76,6 +76,16 @@ export async function getWeather({ lat, lon }) {
   return { temp: j.current?.temperature_2m, code: j.current?.weather_code, unit: j.current_units?.temperature_2m || '°C' };
 }
 
+// Daily forecast for the coming days: { 'YYYY-MM-DD': { code, max, rain } }.
+export async function getForecast({ lat, lon }) {
+  const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=weather_code,temperature_2m_max,precipitation_probability_max&timezone=auto&forecast_days=14`);
+  if (!res.ok) throw new Error('forecast unavailable');
+  const j = await res.json();
+  const d = j.daily || {};
+  const unit = j.daily_units?.temperature_2m_max || '°C';
+  return Object.fromEntries((d.time || []).map((t, i) => [t, { code: d.weather_code?.[i], max: d.temperature_2m_max?.[i], rain: d.precipitation_probability_max?.[i], unit }]));
+}
+
 export function getPosition() {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) return reject(new Error('Location is not available on this device.'));

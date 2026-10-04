@@ -68,15 +68,20 @@ try {
 
   // --- AI ---
   const aiBody = {
-    fam: 'family-aaaa1', ages: [4], bands: ['4-5'], cell, maxMins: 60, place: 'out', energy: 'active',
-    weather: 'Clear 18°C', season: 'autumn', when: 'Sunday afternoon', recentIds: ['volcano', 'evil<script>'], favIds: [],
+    fam: 'family-aaaa1', ages: [4], bands: ['4-5'], cell, vibe: 'adventure', season: 'Autumn', note: '',
+    days: [
+      { key: 'sat', label: 'Saturday 10 Oct', weather: 'Clear, 18°C', booked: ['Swimming 09:00–10:00'], windows: [{ id: 'sat@10:15', start: '10:15', end: '12:30', mins: 999 }, { id: 'sat@13:30', start: '13:30', end: '18:00', mins: 270 }, { id: 'evil', start: '1', end: '2', mins: 1 }] },
+      { key: 'sun', label: 'Sunday 11 Oct', weather: 'Rain', booked: [], windows: [{ id: 'sun@09:00', start: '09:00', end: '12:30', mins: 210 }] },
+    ],
+    recentIds: ['volcano', 'evil<script>'], favIds: [],
     places: [{ name: 'Pioneer Square Playground', type: 'playground', km: 0.1 }, { name: 'Bad', type: 'hacker', km: 1 }],
   };
   let r = await post('/api/ai', aiBody);
   assert.equal(r.status, 200, await r.clone().text());
   let ai = await r.json();
-  assert.deepEqual(ai.picks.map((p) => p.activityId.startsWith('ai-') ? 'custom' : p.activityId), ['scavenger', 'custom'], 'hallucinated id dropped');
+  assert.deepEqual(ai.picks.map((p) => [p.windowId, p.activityId.startsWith('ai-') ? 'custom' : p.activityId]), [['sat@10:15', 'scavenger'], ['sat@13:30', 'custom']], 'bad window + hallucinated id dropped');
   assert.equal(ai.picks[0].placeName, 'Pioneer Square Playground');
+  assert.equal(ai.picks[0].why, 'Popular with 3 families near you and perfect for the park.', 'kept: scavenger really is trending (3 families)');
   assert.equal(ai.picks[1].custom.cat, 'sensory');
   assert.equal(ai.picks[1].custom.ages[0], 3);
   assert.equal(ai.remaining, 2);
@@ -95,19 +100,26 @@ try {
   assert.match(userMsg, /Pioneer Square Playground/);
   assert.doesNotMatch(userMsg, /evil<script>|hacker/, 'invalid client input filtered');
   assert.match(sent.body.system[0].text, /CATALOG/);
+  assert.match(userMsg, /\[sat@10:15\] 10:15–12:30 \(135 min\)/, 'window length recomputed server-side');
+  assert.doesNotMatch(userMsg, /evil\]/, 'malformed window dropped');
+  assert.match(userMsg, /Already booked: Swimming 09:00–10:00/);
 
-  // Free-text question allows more custom ideas.
-  r = await post('/api/ai', { ...aiBody, question: 'Calm idea for a 4 year old with a broken arm?' });
+  // A parent's note is passed through.
+  r = await post('/api/ai', { ...aiBody, note: 'Grandma visits Sunday lunch; Mia has a broken arm' });
   ai = await r.json();
   assert.equal(r.status, 200);
-  assert.match(mock.requests.at(-1).body.messages[0].content, /PARENT'S QUESTION: Calm idea/);
+  assert.match(mock.requests.at(-1).body.messages[0].content, /PARENT'S NOTE: Grandma visits/);
+
+  // No free time → 400 without using up quota.
+  r = await post('/api/ai', { ...aiBody, days: [{ key: 'sat', label: 'x', weather: '', booked: [], windows: [] }] });
+  assert.equal(r.status, 400);
   assert.equal(ai.remaining, 1);
 
   // Daily limit (set to 3 for this test).
   assert.equal((await post('/api/ai', aiBody)).status, 200);
   r = await post('/api/ai', aiBody);
   assert.equal(r.status, 429);
-  assert.match((await r.json()).error, /free AI suggestions/);
+  assert.match((await r.json()).error, /free AI plans/);
   // A different family still has quota.
   assert.equal((await post('/api/ai', { ...aiBody, fam: 'family-zzzz9' })).status, 200);
 

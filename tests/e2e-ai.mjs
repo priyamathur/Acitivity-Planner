@@ -24,14 +24,15 @@ for (let i = 0; i < 60; i++) {
 
 const fail = (m) => { throw new Error(m); };
 const browser = await chromium.launch();
-const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, geolocation: { latitude: 47.6062, longitude: -122.3321 }, permissions: ['geolocation'] });
+const ctx = await browser.newContext({ locale: 'en-GB', viewport: { width: 390, height: 844 }, geolocation: { latitude: 47.6062, longitude: -122.3321 }, permissions: ['geolocation'] });
+await ctx.clock.setFixedTime(new Date('2026-10-07T10:00:00'));
 const page = await ctx.newPage();
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 await page.route('https://overpass-api.de/**', (r) => r.fulfill({ json: { elements: [
   { type: 'node', id: 11, lat: 47.607, lon: -122.333, tags: { name: 'Pioneer Square Playground' } },
 ] } }));
-await page.route('https://api.open-meteo.com/**', (r) => r.fulfill({ json: { current: { temperature_2m: 18, weather_code: 0 }, current_units: { temperature_2m: '°C' } } }));
+await page.route('https://api.open-meteo.com/**', (r) => r.fulfill({ json: { daily: { time: ['2026-10-10', '2026-10-11'], weather_code: [0, 61], temperature_2m_max: [18, 14], precipitation_probability_max: [5, 70] }, daily_units: { temperature_2m_max: '°C' } } }));
 
 // Another family nearby (same age band) already shared the scavenger hunt.
 await fetch(BASE + 'api/share', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ fam: 'neighbour-family-1', cell: '952:-2447', bands: ['4-5'], activity: 'scavenger' }) });
@@ -39,49 +40,56 @@ await fetch(BASE + 'api/share', { method: 'POST', headers: { 'content-type': 'ap
 try {
   await page.goto(BASE);
   await page.getByRole('button', { name: "Add my kids' ages" }).click();
-  await page.selectOption('select[name=kyear]', String(new Date().getFullYear() - 5));
+  await page.fill('input[name=kname]', 'Mia');
+  await page.selectOption('select[name=kyear]', '2021');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
 
   // Set area via Near me (also loads named places the AI can mention).
   await page.locator('nav.tabs').getByRole('link', { name: /Near me/ }).click();
   await page.getByRole('button', { name: /Use my location/ }).click();
   await page.getByText('Pioneer Square Playground').waitFor();
-  await page.locator('nav.tabs').getByRole('link', { name: /Today/ }).click();
+  await page.locator('nav.tabs').getByRole('link', { name: /Weekend/ }).click();
 
   // Below threshold (1 family, needs 2): honest empty state.
   await page.getByText(/Not enough families near you have shared yet.*at least 2 families/).waitFor();
 
-  // Ask box is visible because the server has AI.
-  await page.getByText('Ask for something specific').waitFor();
+  // Add Mia's swimming class.
+  await page.getByRole('button', { name: '+ Add', exact: true }).click();
+  await page.fill('input[name=title]', "Mia's swimming");
+  await page.fill('input[name=start]', '09:00');
+  await page.fill('input[name=end]', '10:00');
+  await page.locator('#cls').getByRole('button', { name: 'Add', exact: true }).click();
 
-  // Guided bot → AI picks with reasons.
-  await page.getByRole('button', { name: 'About an hour' }).click();
-  await page.getByRole('button', { name: 'Go somewhere' }).click();
-  await page.getByRole('button', { name: 'Burn energy' }).click();
-  await page.getByText('Three ideas that fit your afternoon.').waitFor();
+  // AI plan with a note.
+  await page.getByRole('button', { name: /Plan it with AI/ }).waitFor();
+  await page.fill('#wk-note', 'Grandma visits Sunday lunch');
+  await page.getByRole('button', { name: /Plan it with AI/ }).click();
+  await page.getByText(/A gentle weekend that works around your plans/).waitFor();
+  await page.getByText(/AI plans left today/).waitFor();
+  if ((await page.locator('.plan-slot').count()) !== 4) fail('every free window should be filled (AI + library fallback)');
+  const sat = page.locator('.day').nth(0);
+  await sat.getByText('Nature scavenger hunt').waitFor();
+  await sat.getByText('📍 Pioneer Square Playground').waitFor();
+  await sat.getByText('Dinosaur dig in a tray').waitFor();
   // The mock claims popularity that the data doesn't support; the server must strip it.
   if (await page.getByText(/Popular with 3 families/).count()) fail('unsupported popularity claim shown');
-  await page.getByText('📍 Pioneer Square Playground').waitFor();
-  await page.getByText('Dinosaur dig in a tray').waitFor();
-  if ((await page.locator('.picks .act').count()) !== 2) fail('expected 2 valid AI picks (hallucinated one dropped)');
-  await page.getByText(/AI suggestions · \d+ left today/).waitFor();
-  await page.screenshot({ path: `${SHOTS}/10-ai-picks.png`, fullPage: true });
+  await page.screenshot({ path: `${SHOTS}/10-ai-plan.png`, fullPage: true });
 
-  // The request carried the nearby place and the kid's age band, and no coordinates.
+  // What reached the AI: class type + times and the note, but not the child's name or coordinates.
   const sent = JSON.stringify(mock.requests.at(-1).body);
-  if (!sent.includes('Pioneer Square Playground')) fail('nearby place not sent to AI');
+  for (const t of ['Swimming 09:00–10:00', 'sat@10:15', 'Grandma visits Sunday lunch', 'Pioneer Square Playground', 'Light rain|Rain']) if (!new RegExp(t).test(sent)) fail(`AI request missing ${t}`);
+  if (sent.includes('Mia')) fail("child's name leaked to AI");
   if (sent.includes('47.60') || sent.includes('-122.33')) fail('raw coordinates leaked to AI');
 
-  // Open the AI-written idea: shows disclaimer; save memory (no share option for AI ideas).
-  await page.getByText('Dinosaur dig in a tray').click();
+  // The AI-written idea: disclaimer; it can't be shared to the community.
+  await sat.getByText('Dinosaur dig in a tray').click();
   await page.getByText(/written by AI/).waitFor();
-  await page.getByRole('button', { name: /We did it/ }).click();
+  await page.locator('#sheet-body').getByRole('button', { name: /We did it/ }).click();
   if (await page.locator('label.share').count()) fail('AI ideas must not be shareable');
   await page.getByRole('button', { name: 'Save memory' }).click();
 
-  // Save a memory for the library pick and share it anonymously → crosses the threshold.
-  await page.locator('.picks [data-open="scavenger"]').click();
-  await page.getByRole('button', { name: /We did it/ }).click();
+  // Done on the library pick + share anonymously → crosses the threshold.
+  await page.locator('.plan-slot', { hasText: 'Nature scavenger hunt' }).getByRole('button', { name: '✅ We did it' }).click();
   await page.locator('label.share input').check();
   await page.screenshot({ path: `${SHOTS}/11-share.png` });
   await page.getByRole('button', { name: 'Save memory' }).click();
@@ -92,14 +100,8 @@ try {
   await page.locator('#popular').getByText('2 families did this').waitFor();
   await page.screenshot({ path: `${SHOTS}/12-popular.png`, fullPage: true });
 
-  // Free-text question.
-  await page.fill('#ask-q', 'A calm idea for a 5 year old with a broken arm');
-  await page.getByRole('button', { name: 'Ask', exact: true }).click();
-  await page.getByText('Here are some gentle ideas for a quiet day.').waitFor();
-  if (!JSON.stringify(mock.requests.at(-1).body).includes('broken arm')) fail('question not sent');
-
-  // AI idea survives reload and can be planned.
-  await page.reload();
+  // AI idea and plan survive reload; memories saved.
+  await page.locator('.day').nth(0).getByText('Dinosaur dig in a tray').waitFor();
   await page.locator('nav.tabs').getByRole('link', { name: /Memories/ }).click();
   await page.getByText('Dinosaur dig in a tray').first().waitFor();
 

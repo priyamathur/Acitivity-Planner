@@ -264,7 +264,7 @@ export const ACTIVITIES = [
     ['Biology', 'Patience', 'Wonder']),
 ];
 
-// ---------- Long-term plans ----------
+// ---------- Seasons ----------
 
 export const SEASONS = {
   spring: { label: 'Spring', emoji: '🌷', months: [2, 3, 4] },
@@ -272,26 +272,3 @@ export const SEASONS = {
   autumn: { label: 'Autumn', emoji: '🍁', months: [8, 9, 10] },
   winter: { label: 'Winter', emoji: '❄️', months: [11, 0, 1] },
 };
-
-export const BUCKET_LISTS = {
-  spring: ['Plant seeds and watch them sprout', 'Fly a kite', 'Go on a puddle walk', 'Find the first flower of spring', 'Have a picnic in the park', 'Visit a farm with baby animals', 'Build a bug hotel', 'Ride bikes somewhere new', 'Hunt for bird nests (look, don\'t touch)', 'Make a flower crown'],
-  summer: ['Have a backyard camp-out', 'Catch fireflies (and let them go)', 'Make homemade ice lollies', 'Run through a sprinkler', 'Watch a sunset together', 'Go to the beach or a lake', 'Have a no-screens summer day', 'Stargaze and spot a shooting star', 'Pick berries at a farm', 'Set up a lemonade stand'],
-  autumn: ['Jump in a leaf pile', 'Go apple or pumpkin picking', 'Make leaf rubbings', 'Bake something with apples', 'Go on a nature hike', 'Make a pinecone bird feeder', 'Have a bonfire or cozy cocoa night', 'Collect conkers, acorns or seed pods', 'Start a gratitude jar', 'Visit a museum on a rainy day'],
-  winter: ['Build a blanket fort', 'Have a family board-game night', 'Make paper snowflakes', 'Bake and deliver treats to neighbours', 'Go on a winter-light walk', 'Build a snowman (or an indoor pillow-man)', 'Make a time capsule', 'Read under the covers with a torch', 'Feed the winter birds', 'Have a pyjama pancake breakfast'],
-};
-
-export const LIFE_SKILLS = [
-  { band: 'Ages 2–3', ages: [2, 3], skills: ['Put toys back in a basket', 'Wash and dry hands', 'Help put socks on', 'Carry their own plate to the counter', 'Water a plant with help', 'Wipe up a small spill'] },
-  { band: 'Ages 4–5', ages: [4, 5], skills: ['Get dressed by themselves', 'Set the table', 'Pour a drink from a small jug', 'Make their bed (roughly!)', 'Spread butter with a butter knife', 'Know their full name and a grown-up\'s phone number', 'Pack their own bag with a checklist'] },
-  { band: 'Ages 6–8', ages: [6, 8], skills: ['Tie their shoes', 'Make a simple sandwich or snack', 'Sort and fold laundry', 'Count money and pay at a shop', 'Prepare a simple breakfast', 'Look after a pet\'s food and water', 'Write and send a thank-you card'] },
-  { band: 'Ages 9–12', ages: [9, 12], skills: ['Cook a simple meal with supervision', 'Use a washing machine', 'Plan and budget a small shopping trip', 'Read a map and plan a route', 'Basic first aid (plasters, when to call for help)', 'Manage a weekly routine/calendar', 'Mend a button or simple tear'] },
-];
-
-export const TRADITIONS = [
-  { title: 'Pancake Sunday', emoji: '🥞', cadence: 'Weekly', desc: 'Same morning, same ritual — kids cook, everyone shares a rose & thorn.' },
-  { title: 'Adventure Saturday', emoji: '🗺️', cadence: 'Monthly', desc: 'First Saturday of the month: kids take turns choosing a new local place.' },
-  { title: 'Screen-free Friday night', emoji: '🕯️', cadence: 'Weekly', desc: 'Candles, board games and a slow dinner.' },
-  { title: 'Birthday interview', emoji: '🎤', cadence: 'Yearly', desc: 'Ask the same 10 questions every birthday and save the answers in Memories.' },
-  { title: 'First-day-of-season walk', emoji: '🌳', cadence: 'Seasonal', desc: 'Walk the same route each season and photograph the same tree.' },
-  { title: 'Gratitude jar reading', emoji: '🫙', cadence: 'Monthly', desc: 'Read the month\'s gratitude notes together over cocoa.' },
-];
