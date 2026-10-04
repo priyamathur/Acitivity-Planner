@@ -5,8 +5,8 @@
   "start_url": "./#weekend",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#fbf8f2",
-  "theme_color": "#2f6b4f",
+  "background_color": "#F1FAFF",
+  "theme_color": "#1E8FFF",
   "orientation": "portrait",
   "categories": ["lifestyle", "parenting", "education"],
   "icons": [
@@ -18,6 +18,6 @@
   "shortcuts": [
     { "name": "Things to do near me", "url": "./#near" },
     { "name": "This weekend", "url": "./#weekend" },
-    { "name": "Save a memory", "url": "./#memories" }
+    { "name": "Chat", "url": "./#chat" }
   ]
 }

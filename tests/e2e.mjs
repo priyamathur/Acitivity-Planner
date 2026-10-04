@@ -21,6 +21,8 @@ const ctx = await browser.newContext({ locale: 'en-GB', viewport: { width: 390, 
 // Freeze "today" to Wednesday 7 Oct 2026 so this weekend is Sat 10 – Sun 11 Oct.
 await ctx.clock.setFixedTime(new Date('2026-10-07T10:00:00'));
 const page = await ctx.newPage();
+// Web fonts are optional; keep tests offline.
+await ctx.route('https://fonts.googleapis.com/**', (r) => r.fulfill({ contentType: 'text/css', body: '' }));
 await page.addInitScript(() => { delete Navigator.prototype.share; });
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
@@ -52,7 +54,7 @@ try {
   await page.getByText('10 Oct – 11 Oct').waitFor();
 
   // Location (for weather + places)
-  await page.locator('nav.tabs').getByRole('link', { name: /Near me/ }).click();
+  await page.locator('.explore').getByRole('link', { name: 'Places near us' }).click();
   await page.getByRole('button', { name: /Use my location/ }).click();
   await page.getByText('Pioneer Square Playground').waitFor();
   await page.getByText('Make it an adventure').waitFor();
@@ -159,7 +161,7 @@ try {
   await page.locator('#timeline-wk').getByText('Swimming').waitFor();
 
   // Ideas → add to weekend
-  await page.locator('nav.tabs').getByRole('link', { name: /Ideas/ }).click();
+  await page.locator('.explore').getByRole('link', { name: 'All ideas' }).click();
   await page.fill('#q', 'volcano');
   await page.getByText('Kitchen volcano').click();
   await page.getByRole('button', { name: /Add to our weekend/ }).click();
@@ -167,7 +169,7 @@ try {
   await page.locator('#timeline-wk').getByText('Kitchen volcano').waitFor();
 
   // Favourites still work
-  await page.locator('nav.tabs').getByRole('link', { name: /Ideas/ }).click();
+  await page.locator('.explore').getByRole('link', { name: 'All ideas' }).click();
   await page.fill('#q', 'volcano');
   await page.locator('[data-fav="volcano"]').first().click();
   await page.getByRole('button', { name: '♥ Saved' }).click();
@@ -177,7 +179,7 @@ try {
   await page.screenshot({ path: `${SHOTS}/05-ideas.png` });
 
   // Memories
-  await page.locator('nav.tabs').getByRole('link', { name: /Memories/ }).click();
+  await page.evaluate(() => (location.hash = 'memories'));
   await page.getByText('Best Saturday ever').waitFor();
   await page.getByText('Again! Again!').waitFor();
   await page.getByText('weekends with an adventure').waitFor();
@@ -193,6 +195,17 @@ try {
   await page.locator('.tl-act').first().waitFor();
   await page.getByText("Sam's birthday party").first().waitFor();
 
+  // Just two tabs; Places, Ideas and Past weekends live under Weekend, each with a way back
+  if ((await page.locator('nav.tabs .tab').count()) !== 2) fail('expected 2 tabs');
+  for (const [link, heading] of [['Places near us', 'Places near us'], ['All ideas', 'All ideas'], ['Past weekends', 'Past weekends']]) {
+    await page.locator('nav.tabs').getByRole('link', { name: /Weekend/ }).click();
+    await page.locator('.explore').getByRole('link', { name: link }).click();
+    await page.getByRole('heading', { name: heading }).waitFor();
+    if (!(await page.locator('nav.tabs .tab[aria-current=page]').innerText()).includes('Weekend')) fail(`${link} should highlight the Weekend tab`);
+    await page.getByRole('link', { name: '‹ Weekend' }).click();
+    await page.getByRole('heading', { name: 'This weekend' }).waitFor();
+  }
+
   // Chat without a server: explains it needs AI instead of failing
   await page.locator('nav.tabs').getByRole('link', { name: /Chat/ }).click();
   await page.getByText(/Chat uses AI, which is switched on/).waitFor();
@@ -206,6 +219,7 @@ try {
 
   // Desktop + dark mode render check
   const dark = await browser.newPage({ viewport: { width: 1200, height: 900 }, colorScheme: 'dark' });
+  await dark.route('https://fonts.googleapis.com/**', (r) => r.fulfill({ contentType: 'text/css', body: '' }));
   dark.on('pageerror', (e) => errors.push(e.message));
   await dark.goto(BASE + '#weekend');
   await dark.getByText('Plan our weekend').waitFor();

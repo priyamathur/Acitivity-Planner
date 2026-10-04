@@ -48,7 +48,9 @@ function route() {
 function show(view) {
   closeSheet();
   $('main').dataset.view = view;
-  $$('.tab').forEach((t) => t.setAttribute('aria-current', t.dataset.view === view ? 'page' : 'false'));
+  // Near me and Ideas live under the Weekend tab.
+  const tab = ['near', 'ideas', 'memories'].includes(view) ? 'weekend' : view;
+  $$('.tab').forEach((t) => t.setAttribute('aria-current', t.dataset.view === tab ? 'page' : 'false'));
   const render = { weekend: renderWeekend, chat: renderChat, near: renderNear, ideas: renderIdeas, memories: renderMemories }[view];
   render($('#view'));
   $('#view').focus({ preventScroll: true });
@@ -203,7 +205,13 @@ function renderWeekend(root) {
     ${plan ? `<div class="row gap center-row">
       <button class="btn primary" id="send-plan">↗ Send to my partner</button>
       <button class="btn ghost" id="replan">Re-plan</button></div>` : ''}
-    <section id="popular"></section>`;
+    <section id="popular"></section>
+    <nav class="explore" aria-label="Explore">
+      ${!S().location ? '<a class="row-btn card" href="#near"><span>📍 <b>Set your area</b></span><span class="meta">for weather &amp; places ›</span></a>' : ''}
+      <a class="explore-link" href="#near">📍 Places near us</a>
+      <a class="explore-link" href="#ideas">💡 All ideas</a>
+      <a class="explore-link" href="#memories">💛 Past weekends</a>
+    </nav>`;
 
   $$('[data-wk]', root).forEach((b) => (b.onclick = () => { weekendOffset = Number(b.dataset.wk); renderWeekend(root); }));
   $('#classes-btn', root).onclick = () => (classCount ? classesSheet() : classForm());
@@ -732,7 +740,8 @@ let nearState = { type: 'playground', radius: 5, places: null, error: null, load
 function renderNear(root) {
   const loc = S().location;
   root.innerHTML = `
-    <section class="hero"><h1>Things to do near me</h1>
+    <a class="back" href="#weekend">‹ Weekend</a>
+    <section class="hero"><h1>Places near us</h1>
       <p class="lede">Free, mostly outdoor places from open map data — no ads, no sponsored rankings.</p></section>
     <section class="card pad">
       <div class="row gap wrap">
@@ -815,7 +824,8 @@ let ideaFilter = { cat: 'all', setting: 'all', q: '', forKids: true };
 function renderIdeas(root) {
   const ages = kidAges();
   root.innerHTML = `
-    <section class="hero"><h1>Idea library</h1><p class="lede">${ACTIVITIES.length} screen-free ideas for the weekend.</p></section>
+    <a class="back" href="#weekend">‹ Weekend</a>
+    <section class="hero"><h1>All ideas</h1><p class="lede">${ACTIVITIES.length} screen-free ideas for the weekend.</p></section>
     <input class="input" id="q" type="search" placeholder="Search: slime, baking, rainy…" value="${esc(ideaFilter.q)}" aria-label="Search ideas" />
     <div class="chips-scroll">${[['all', '✨ All'], ...Object.entries(CATEGORIES).map(([k, c]) => [k, `${c.emoji} ${c.label}`]), ['favs', '♥ Saved']].map(([k, l]) => `<button class="chip-btn ${ideaFilter.cat === k ? 'on' : ''}" data-cat="${k}">${l}</button>`).join('')}</div>
     <div class="row gap wrap center-v">
@@ -854,7 +864,7 @@ function memoryForm({ activityId = null, title = '', date = store.isoDate(), onS
       <fieldset class="moods"><legend>How was it?</legend>${MOODS.map((m, i) => `<label><input type="radio" name="mood" value="${m}" ${i === 1 ? 'checked' : ''}/><span>${m}</span></label>`).join('')}</fieldset>
       <label>A moment to remember<textarea class="input" name="note" rows="3" placeholder="The bit you'll want to remember in 10 years…"></textarea></label>
       <label>Something they said <textarea class="input" name="quote" rows="2" placeholder="“Mummy, the clouds are having a party!”"></textarea></label>
-      <label class="file">📷 Add a photo (stays on your phone)<input type="file" name="photo" accept="image/*" /></label>
+      <label class="file">📷 Add a photo from your phone<span class="meta">Opens your Photos. A small copy is kept in LittleRoam on this phone only.</span><input type="file" name="photo" accept="image/*" /></label>
       ${canShare(activityId) ? `<label class="share"><input type="checkbox" name="share" ${S().shareNearby ? 'checked' : ''}/>
         <span>Add anonymously to “Popular near you”<small>Shares only the activity, your kids' age bands and a ~5 km area. No names, notes or photos.</small></span></label>` : ''}
       <button class="btn primary">Save memory</button>
@@ -898,7 +908,8 @@ function renderMemories(root) {
   const weekendsOut = new Set(thisYear.filter((m) => [0, 6].includes(new Date(m.date + 'T12:00').getDay())).map((m) => { const d = new Date(m.date + 'T12:00'); d.setDate(d.getDate() - ((d.getDay() + 1) % 7)); return store.isoDate(d); })).size;
   const outdoors = thisYear.filter((m) => m.activityId && byId[m.activityId]?.setting !== 'home').length;
   root.innerHTML = `
-    <section class="hero"><h1>Our memories</h1><p class="lede">Private to your family. No likes, no followers, no comparing.</p></section>
+    <a class="back" href="#weekend">‹ Weekend</a>
+    <section class="hero"><h1>Past weekends</h1><p class="lede">Private to your family. No likes, no followers, no comparing.</p></section>
     <div class="grid three stats">
       <div class="stat"><strong>${weekendsOut}</strong><span>weekends with an adventure</span></div>
       <div class="stat"><strong>${thisYear.length}</strong><span>in ${year}</span></div>

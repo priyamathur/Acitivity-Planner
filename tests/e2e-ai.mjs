@@ -27,6 +27,8 @@ const browser = await chromium.launch();
 const ctx = await browser.newContext({ locale: 'en-GB', viewport: { width: 390, height: 844 }, geolocation: { latitude: 47.6062, longitude: -122.3321 }, permissions: ['geolocation'] });
 await ctx.clock.setFixedTime(new Date('2026-10-07T10:00:00'));
 const page = await ctx.newPage();
+// Web fonts are optional; keep tests offline.
+await ctx.route('https://fonts.googleapis.com/**', (r) => r.fulfill({ contentType: 'text/css', body: '' }));
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 await page.route('https://overpass-api.de/**', (r) => r.fulfill({ json: { elements: [
@@ -45,7 +47,7 @@ try {
   await page.getByRole('button', { name: 'Save', exact: true }).click();
 
   // Set area via Near me (also loads named places the AI can mention).
-  await page.locator('nav.tabs').getByRole('link', { name: /Near me/ }).click();
+  await page.locator('.explore').getByRole('link', { name: 'Places near us' }).click();
   await page.getByRole('button', { name: /Use my location/ }).click();
   await page.getByText('Pioneer Square Playground').waitFor();
   await page.locator('nav.tabs').getByRole('link', { name: /Weekend/ }).click();
@@ -103,7 +105,7 @@ try {
 
   // AI idea and plan survive reload; memories saved.
   await page.locator('.day').nth(0).getByText('Dinosaur dig in a tray').waitFor();
-  await page.locator('nav.tabs').getByRole('link', { name: /Memories/ }).click();
+  await page.evaluate(() => (location.hash = 'memories'));
   await page.getByText('Dinosaur dig in a tray').first().waitFor();
 
   if (errors.length) fail('page errors:\n' + errors.join('\n'));

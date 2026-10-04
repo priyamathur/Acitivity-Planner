@@ -28,6 +28,8 @@ const browser = await chromium.launch();
 const ctx = await browser.newContext({ locale: 'en-GB', viewport: { width: 390, height: 844 } });
 await ctx.clock.setFixedTime(new Date('2026-10-07T10:00:00'));
 const page = await ctx.newPage();
+// Web fonts are optional; keep tests offline.
+await ctx.route('https://fonts.googleapis.com/**', (r) => r.fulfill({ contentType: 'text/css', body: '' }));
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 await page.route('https://api.open-meteo.com/**', (r) => r.fulfill({ json: { daily: { time: ['2026-10-10', '2026-10-11', '2026-10-17', '2026-10-18'], weather_code: [1, 1, 2, 63], temperature_2m_max: [17, 16, 15, 12], precipitation_probability_max: [5, 10, 20, 80] }, daily_units: { temperature_2m_max: '°C' } } }));
