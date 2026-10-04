@@ -195,7 +195,7 @@ try {
   await page.evaluate(() => (location.hash = 'memories'));
   await page.getByText('Best Saturday ever').waitFor();
   await page.getByText('Again! Again!').waitFor();
-  await page.getByText('weekends with an adventure').waitFor();
+  await page.getByText(/^weekends? with an adventure$/).waitFor();
   await page.screenshot({ path: `${SHOTS}/07-memories.png`, fullPage: true });
   await page.getByRole('button', { name: /Our year so far/ }).click();
   await page.getByText(/memor(y|ies) made together/).waitFor();
