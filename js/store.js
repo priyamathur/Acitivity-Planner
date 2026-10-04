@@ -14,6 +14,9 @@ const DEFAULT = {
   favs: [],
   recent: [], // last activity ids suggested/done
   plusInterest: false,
+  fam: null, // random device id, used only for anonymous counting and AI daily limits
+  custom: {}, // AI-created activities, keyed by id
+  shareNearby: false, // remembered choice for the anonymous share checkbox
 };
 
 let state = load();

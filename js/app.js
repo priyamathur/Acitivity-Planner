@@ -2,6 +2,8 @@ import { ACTIVITIES, CATEGORIES, SEASONS, BUCKET_LISTS, LIFE_SKILLS, TRADITIONS 
 import { recommend, planWeekend, TIME_OPTIONS, PLACE_OPTIONS, ENERGY_OPTIONS, currentSeason, ageFromBirthYear, weatherBucket, weatherLabel, fitsAges } from './planner.js';
 import { PLACE_TYPES, findPlaces, geocode, getWeather, getPosition, directionsUrl, osmUrl } from './near.js';
 import * as store from './store.js';
+import * as api from './api.js';
+import { cellFor, bandsForAges, bandLabel } from './community.js';
 
 // Optional: set to a Tally/Google Form/Stripe link to collect Plus early-access sign-ups.
 const WAITLIST_URL = '';
@@ -11,6 +13,9 @@ const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const byId = Object.fromEntries(ACTIVITIES.map((a) => [a.id, a]));
 const S = () => store.get();
+// AI-created ideas are saved on the device so they can be planned and remembered like any other.
+Object.assign(byId, S().custom);
+const famId = () => S().fam || (store.set((s) => (s.fam = store.uid())), S().fam);
 const kidAges = () => S().family.kids.map((k) => ageFromBirthYear(k.birthYear)).filter((a) => !Number.isNaN(a));
 const fmtMins = (m) => (m < 60 ? `${m} min` : m % 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m / 60} h`);
 const settingLabel = { home: 'At home', outside: 'Outside', out: 'Trip' };
@@ -66,14 +71,15 @@ function closeSheet() {
 }
 
 // ---------------- Activity card & detail ----------------
-function card(a, { compact = false } = {}) {
+function card(a, { compact = false, why = '', place = '' } = {}) {
   const fav = S().favs.includes(a.id);
   return `<article class="card act" data-id="${a.id}">
     <button class="act-main" data-open="${a.id}" aria-label="Open ${esc(a.title)}">
-      <span class="act-emoji" aria-hidden="true">${a.emoji}</span>
+      <span class="act-emoji" aria-hidden="true">${esc(a.emoji)}</span>
       <span class="act-text">
-        <strong>${esc(a.title)}</strong>
+        <strong>${esc(a.title)}${a.ai ? ' <span class="chip sm ai">✨ AI idea</span>' : ''}</strong>
         <span class="meta">${CATEGORIES[a.cat].emoji} ${CATEGORIES[a.cat].label} · ${fmtMins(a.mins)} · ${settingLabel[a.setting]} · ages ${a.ages[0]}–${a.ages[1]}</span>
+        ${why || place ? `<span class="why">${[why && esc(why), place && `📍 ${esc(place)}`].filter(Boolean).join(' · ')}</span>` : ''}
         ${compact ? '' : `<span class="skills">${a.skills.map((s) => `<span class="chip sm">${esc(s)}</span>`).join('')}</span>`}
       </span>
     </button>
@@ -93,6 +99,7 @@ function openActivity(a, { fromLink = false } = {}) {
       <h3>How to</h3><ol class="list steps">${a.steps.map((m) => `<li>${esc(m)}</li>`).join('')}</ol>
       <h3>What they're learning</h3><p>${a.skills.map((s) => `<span class="chip">${esc(s)}</span>`).join(' ')}</p>
       ${a.tip ? `<p class="tip">💡 ${esc(a.tip)}</p>` : ''}
+      ${a.ai ? '<p class="fine">✨ This idea was written by AI for your family. Read it through first and use your own judgement on safety.</p>' : ''}
       <div class="row wrap gap">
         <button class="btn primary" data-act="done">✅ We did it — save a memory</button>
         <button class="btn" data-act="plan">📅 Add to plan</button>
@@ -169,7 +176,14 @@ function renderToday(root) {
       <p class="lede">Tell me a little about right now and I'll plan something screen-free you'll actually remember.</p>
     </section>
     ${planned.length ? `<section><h2 class="h">On today's plan</h2>${planned.map((a) => card(a, { compact: true })).join('')}</section>` : ''}
+    ${api.aiEnabled() ? `<form id="ask" class="card pad ask">
+      <label for="ask-q">✨ Ask for something specific</label>
+      <div class="row gap"><input id="ask-q" class="input grow" maxlength="400" placeholder="e.g. a calm idea for a 4-year-old with a cold" />
+      <button class="btn primary">Ask</button></div>
+      <p class="fine">Your question, your kids' ages and today's context are sent to our AI (Claude) to plan. No names or photos.</p>
+    </form>` : ''}
     <section class="chat" id="chat" aria-live="polite"></section>
+    <section id="popular"></section>
     <section class="quick">
       <h2 class="h">Quick picks</h2>
       <div class="grid two">
@@ -180,7 +194,100 @@ function renderToday(root) {
       </div>
     </section>`;
   $$('[data-quick]', root).forEach((b) => (b.onclick = () => quick(b.dataset.quick)));
+  const ask = $('#ask', root);
+  if (ask) ask.onsubmit = (e) => {
+    e.preventDefault();
+    const q = $('#ask-q', root).value.trim();
+    if (!q) return;
+    $('#chat').innerHTML = '';
+    bubble(esc(q), 'me');
+    aiSuggest({ maxMins: 600, place: 'any', energy: 'any' }, q);
+    $('#ask-q', root).value = '';
+  };
   startBot();
+  renderPopular();
+}
+
+// ---------------- Popular near you (anonymous, aggregated) ----------------
+async function renderPopular() {
+  const el = $('#popular');
+  if (!el || !api.communityEnabled()) return;
+  const loc = S().location;
+  const bands = bandsForAges(kidAges());
+  if (!loc || !bands.length) {
+    el.innerHTML = `<h2 class="h">👨‍👩‍👧 Popular with families near you</h2>
+      <p class="meta">${!loc ? 'Set your area in <a href="#near">Near me</a>' : 'Add your kids\' ages in ⚙️ settings'} to see what families with kids the same age are doing nearby.</p>`;
+    return;
+  }
+  el.innerHTML = '<h2 class="h">👨‍👩‍👧 Popular with families near you</h2><p class="meta">Loading…</p>';
+  try {
+    const t = await api.getTrends(cellFor(loc), bands);
+    const acts = t.activities.map((x) => ({ a: byId[x.activity], n: x.families })).filter((x) => x.a);
+    const where = loc.label === 'Your location' ? 'you' : esc(loc.label);
+    el.innerHTML = `<h2 class="h">👨‍👩‍👧 Popular with families near you</h2>
+      ${acts.length
+        ? `<p class="meta">What ${t.families} families with kids ${bands.map(bandLabel).join(' & ')} near ${where} shared in the last 30 days.</p>
+           ${acts.slice(0, 5).map(({ a, n }) => card(a, { compact: true, why: `${n} families did this` })).join('')}`
+        : `<p class="meta">Not enough families near ${where} have shared yet. We only show an activity once at least ${api.minFamilies()} families have done it, so nobody can be identified. When you save a memory, you can add it anonymously to help.</p>`}`;
+  } catch {
+    el.innerHTML = '';
+  }
+}
+
+// ---------------- AI suggestions ----------------
+function aiBody(ctx, question = '') {
+  const ages = kidAges();
+  const loc = S().location;
+  const now = new Date();
+  return {
+    fam: famId(),
+    question,
+    ages,
+    bands: bandsForAges(ages),
+    cell: loc ? cellFor(loc) : null,
+    maxMins: ctx.maxMins,
+    place: ctx.place,
+    energy: ctx.energy,
+    weather: weather ? `${weatherLabel(weather.code)} ${Math.round(weather.temp)}${weather.unit}` : '',
+    season: SEASONS[currentSeason()].label,
+    when: now.toLocaleDateString('en-GB', { weekday: 'long' }) + (now.getHours() < 12 ? ' morning' : now.getHours() < 17 ? ' afternoon' : ' evening'),
+    recentIds: S().recent.filter((id) => !id.startsWith('ai-')),
+    favIds: S().favs.filter((id) => !id.startsWith('ai-')),
+    places: (nearState.places || []).filter((p) => p.named).slice(0, 10).map((p) => ({ name: p.name, type: p.type, km: Number(p.km.toFixed(1)) })),
+  };
+}
+
+async function aiSuggest(ctx, question = '') {
+  const thinking = bubble('<span class="typing">✨ Thinking about your family…</span>');
+  try {
+    const res = await api.askAI(aiBody(ctx, question));
+    thinking.remove();
+    const customs = res.picks.filter((p) => p.custom).map((p) => p.custom);
+    if (customs.length) {
+      store.set((s) => {
+        s.custom ??= {};
+        for (const c of customs) s.custom[c.id] = c;
+        // Keep the 30 most recent AI ideas, plus any that are planned, saved or remembered.
+        const keep = new Set([...s.favs, ...Object.values(s.week).flat(), ...s.memories.map((m) => m.activityId)]);
+        const ids = Object.keys(s.custom);
+        ids.slice(0, Math.max(0, ids.length - 30)).forEach((id) => { if (!keep.has(id)) delete s.custom[id]; });
+      });
+      Object.assign(byId, ...customs.map((c) => ({ [c.id]: c })));
+    }
+    const picks = res.picks.map((p) => ({ a: byId[p.activityId], why: p.why, place: p.placeName })).filter((p) => p.a);
+    store.set((s) => (s.recent = [...picks.map((p) => p.a.id), ...s.recent].slice(0, 12)));
+    const el = bubble(`${esc(res.message || 'Here are some ideas:')}
+      <div class="picks">${picks.map((p) => card(p.a, { why: p.why, place: p.place })).join('')}</div>
+      <p class="fine">✨ AI suggestions · ${res.remaining} left today</p>
+      <div class="row wrap gap"><button class="btn sm" data-more>🔄 Show me others</button><button class="btn sm ghost" data-restart>Start over</button></div>`);
+    $('[data-more]', el).onclick = () => { $('[data-more]', el).parentElement.remove(); question ? aiSuggest(ctx, question) : suggest(ctx, Date.now(), { ai: false }); };
+    $('[data-restart]', el).onclick = () => { $('#chat').innerHTML = ''; startBot(); };
+    el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  } catch (err) {
+    thinking.remove();
+    bubble(`${esc(err.message)} ${question ? '' : 'Here are some ideas from our library instead.'}`);
+    if (!question) suggest(ctx, Date.now(), { ai: false });
+  }
 }
 
 function bubble(html, who = 'bot') {
@@ -233,7 +340,8 @@ function baseCtx(extra = {}) {
   };
 }
 
-function suggest(ctx, seed = Date.now()) {
+function suggest(ctx, seed = Date.now(), { ai = api.aiEnabled() } = {}) {
+  if (ai) return aiSuggest(ctx);
   const full = baseCtx(ctx);
   let picks = recommend(full, { seed });
   let note = '';
@@ -246,7 +354,7 @@ function suggest(ctx, seed = Date.now()) {
     <div class="row wrap gap"><button class="btn sm" data-more>🔄 Show me others</button><button class="btn sm ghost" data-restart>Start over</button>
     ${ctx.place === 'out' ? '<a class="btn sm ghost" href="#near">📍 Find places near me</a>' : ''}</div>`);
   store.set((s) => (s.recent = [...picks.map((a) => a.id), ...s.recent].slice(0, 12)));
-  $('[data-more]', el).onclick = () => { $('[data-more]', el).parentElement.remove(); suggest(ctx, seed + 7); };
+  $('[data-more]', el).onclick = () => { $('[data-more]', el).parentElement.remove(); suggest(ctx, seed + 7, { ai: false }); };
   $('[data-restart]', el).onclick = () => { $('#chat').innerHTML = ''; startBot(); };
   el.scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
@@ -255,8 +363,8 @@ function quick(kind) {
   if (kind === 'near') return (location.hash = 'near');
   if (kind === 'weekend') return weekendSheet();
   $('#chat').innerHTML = '';
-  if (kind === 'rainy') { bubble('Rainy-day rescue, coming up ☔'); suggest({ place: 'home', maxMins: 90, energy: 'any', weather: 'wet' }); }
-  if (kind === 'ten') { bubble('Short and sweet — 30 minutes or less.'); suggest({ place: 'home', maxMins: 30, energy: 'any', mess: 1 }); }
+  if (kind === 'rainy') { bubble('Rainy-day rescue, coming up ☔'); suggest({ place: 'home', maxMins: 90, energy: 'any', weather: 'wet' }, Date.now(), { ai: false }); }
+  if (kind === 'ten') { bubble('Short and sweet — 30 minutes or less.'); suggest({ place: 'home', maxMins: 30, energy: 'any', mess: 1 }, Date.now(), { ai: false }); }
 }
 
 function weekendSheet(seed = Date.now()) {
@@ -484,6 +592,9 @@ function planTraditions(el) {
 // ---------------- Memories ----------------
 const MOODS = ['😍', '😄', '🙂', '😅', '😴'];
 
+// Only library activities can be shared, and only once we know the area and the kids' ages.
+const canShare = (id) => api.communityEnabled() && id && !id.startsWith('ai-') && Boolean(byId[id]) && Boolean(S().location) && bandsForAges(kidAges()).length > 0;
+
 function memoryForm({ activityId = null, title = '' } = {}) {
   openSheet(`<h2>Save a memory</h2>
     <form id="mem" class="col gap">
@@ -493,6 +604,8 @@ function memoryForm({ activityId = null, title = '' } = {}) {
       <label>A moment to remember<textarea class="input" name="note" rows="3" placeholder="The bit you'll want to remember in 10 years…"></textarea></label>
       <label>Something they said <textarea class="input" name="quote" rows="2" placeholder="“Mummy, the clouds are having a party!”"></textarea></label>
       <label class="file">📷 Add a photo (stays on your phone)<input type="file" name="photo" accept="image/*" /></label>
+      ${canShare(activityId) ? `<label class="share"><input type="checkbox" name="share" ${S().shareNearby ? 'checked' : ''}/>
+        <span>Add anonymously to “Popular near you”<small>Shares only the activity, your kids' age bands and a ~5 km area. No names, notes or photos.</small></span></label>` : ''}
       <button class="btn primary">Save memory</button>
     </form>`,
   (el) => {
@@ -514,6 +627,11 @@ function memoryForm({ activityId = null, title = '' } = {}) {
         id: store.uid(), date: f.get('date') || store.isoDate(), title: String(f.get('title')).trim(), activityId,
         mood: f.get('mood'), note: String(f.get('note') || '').trim(), quote: String(f.get('quote') || '').trim(), photoId,
       }));
+      if (canShare(activityId)) {
+        const share = f.get('share') === 'on';
+        store.set((s) => (s.shareNearby = share));
+        if (share) api.shareActivity({ fam: famId(), cell: cellFor(S().location), bands: bandsForAges(kidAges()), activity: activityId }).catch(() => {});
+      }
       closeSheet();
       toast('Memory saved 💛');
       if ($('main').dataset.view === 'memories') renderMemories($('#view'));
@@ -686,6 +804,12 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet
 window.addEventListener('hashchange', route);
 route();
 loadWeather();
+// Turn on AI and Popular-near-you once we know the server supports them.
+api.checkHealth().then(() => {
+  if (!(api.aiEnabled() || api.communityEnabled()) || $('main').dataset.view !== 'today') return;
+  if ($('#chat .bubble.me')) renderPopular(); // don't wipe a conversation in progress
+  else renderToday($('#view'));
+});
 if (!S().onboarded && !location.hash.startsWith('#a/')) onboarding();
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') {

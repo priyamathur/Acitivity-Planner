@@ -1,0 +1,79 @@
+// Durable Object with its own SQLite database. It stores anonymous activity
+// counts and AI usage counters. One instance ("global") is enough at MVP scale.
+// To shard later, route by region, e.g. idFromName(cell prefix).
+import { DurableObject } from 'cloudflare:workers';
+
+const DAY_MS = 86400000;
+export const dayString = (t = Date.now()) => new Date(t).toISOString().slice(0, 10);
+
+export class Community extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    this.sql = ctx.storage.sql;
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS events (
+      day TEXT NOT NULL, cell TEXT NOT NULL, band TEXT NOT NULL, activity TEXT NOT NULL, fam TEXT NOT NULL,
+      PRIMARY KEY (day, fam, activity, band))`);
+    this.sql.exec('CREATE INDEX IF NOT EXISTS events_cell_day ON events (cell, day)');
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS ai_usage (
+      day TEXT NOT NULL, key TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, key))`);
+  }
+
+  // One row per family, per activity, per age band, per day. Re-sharing the same thing is a no-op.
+  log({ cell, bands, activity, fam }) {
+    const day = dayString();
+    for (const band of bands) {
+      this.sql.exec('INSERT OR IGNORE INTO events (day, cell, band, activity, fam) VALUES (?, ?, ?, ?, ?)', day, cell, band, activity, fam);
+    }
+    // Keep 90 days of history.
+    if (Math.random() < 0.02) {
+      const cutoff = dayString(Date.now() - 90 * DAY_MS);
+      this.sql.exec('DELETE FROM events WHERE day < ?', cutoff);
+      this.sql.exec('DELETE FROM ai_usage WHERE day < ?', cutoff);
+    }
+    return { ok: true };
+  }
+
+  // Activities that at least `minFamilies` distinct families in these cells and bands shared in the last `days` days.
+  trends({ cells, bands, days = 30, minFamilies = 3, limit = 8 }) {
+    if (!cells.length) return { activities: [], families: 0 };
+    const since = dayString(Date.now() - days * DAY_MS);
+    const cellQ = cells.map(() => '?').join(',');
+    const bandFilter = bands.length ? `AND band IN (${bands.map(() => '?').join(',')})` : '';
+    const params = [...cells, since, ...bands];
+    const activities = this.sql.exec(
+      `SELECT activity, COUNT(DISTINCT fam) AS families FROM events
+       WHERE cell IN (${cellQ}) AND day >= ? ${bandFilter}
+       GROUP BY activity HAVING families >= ? ORDER BY families DESC, activity LIMIT ?`,
+      ...params, minFamilies, limit,
+    ).toArray();
+    const [{ total }] = this.sql.exec(
+      `SELECT COUNT(DISTINCT fam) AS total FROM events WHERE cell IN (${cellQ}) AND day >= ? ${bandFilter}`,
+      ...params,
+    ).toArray();
+    // The total is hidden too, until it reaches the threshold.
+    return { activities, families: total >= minFamilies ? total : 0 };
+  }
+
+  // Counts one use against every key (family id, IP). Refuses if any key is already over its limit.
+  consume(entries) {
+    const day = dayString();
+    for (const { key, limit } of entries) {
+      const row = this.sql.exec('SELECT n FROM ai_usage WHERE day = ? AND key = ?', day, key).toArray()[0];
+      if (row && row.n >= limit) return { ok: false, remaining: 0 };
+    }
+    let remaining = Infinity;
+    for (const { key, limit } of entries) {
+      this.sql.exec('INSERT INTO ai_usage (day, key, n) VALUES (?, ?, 1) ON CONFLICT (day, key) DO UPDATE SET n = n + 1', day, key);
+      const { n } = this.sql.exec('SELECT n FROM ai_usage WHERE day = ? AND key = ?', day, key).toArray()[0];
+      remaining = Math.min(remaining, limit - n);
+    }
+    return { ok: true, remaining };
+  }
+
+  // Gives a use back when the AI call failed on our side.
+  refund(keys) {
+    const day = dayString();
+    for (const key of keys) this.sql.exec('UPDATE ai_usage SET n = MAX(n - 1, 0) WHERE day = ? AND key = ?', day, key);
+    return { ok: true };
+  }
+}
