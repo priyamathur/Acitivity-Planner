@@ -215,3 +215,14 @@ blockquote { margin: 8px 0; padding: 8px 12px; border-left: 4px solid var(--acce
 
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 .loc-form { min-width: 240px; }
+
+/* AI + community */
+.why { display: block; font-size: .85rem; color: var(--brand); font-weight: 600; margin-top: 2px; }
+.chip.ai { background: var(--brand-soft); color: var(--brand); vertical-align: middle; }
+.ask label { font-weight: 700; }
+.ask .fine { margin: 6px 0 0; }
+.typing { color: var(--muted); animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .45; } }
+label.share { flex-direction: row; align-items: flex-start; gap: 10px; font-weight: 600; padding: 10px 12px; background: var(--surface-2); border-radius: 12px; }
+label.share input { width: 20px; height: 20px; margin-top: 2px; accent-color: var(--brand); flex: none; }
+label.share small { display: block; font-weight: 400; color: var(--muted); font-size: .8rem; }

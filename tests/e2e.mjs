@@ -21,7 +21,8 @@ const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, ge
 const page = await ctx.newPage();
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
-page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+// The app probes /api/health to see if a server is present; a 404 there is expected on static hosting.
+page.on('console', (m) => m.type() === 'error' && !(m.location()?.url || '').includes('/api/health') && errors.push(m.text()));
 
 await page.route('https://overpass-api.de/**', (r) => r.fulfill({ json: { elements: [
   { type: 'node', id: 11, lat: 47.607, lon: -122.333, tags: { name: 'Pioneer Square Playground', wheelchair: 'yes' } },
@@ -68,7 +69,7 @@ try {
   await page.getByRole('button', { name: /Save to my plan/ }).click();
 
   // Near me
-  await page.getByRole('link', { name: /Near me/ }).click();
+  await page.locator('nav.tabs').getByRole('link', { name: /Near me/ }).click();
   await page.getByRole('button', { name: /Use my location/ }).click();
   await page.getByText('Pioneer Square Playground').waitFor();
   await page.getByText('Make it an adventure').waitFor();
@@ -78,7 +79,7 @@ try {
   await page.getByText('London, Greater London').waitFor();
 
   // Today now shows weather (rain → mocked code 63)
-  await page.getByRole('link', { name: /Today/ }).click();
+  await page.locator('nav.tabs').getByRole('link', { name: /Today/ }).click();
   await page.getByText(/Rain · 12/).waitFor();
 
   // Ideas search + favourite
@@ -108,7 +109,7 @@ try {
   await page.getByRole('button', { name: '✓ Ours' }).waitFor();
 
   // Memories
-  await page.getByRole('link', { name: /Memories/ }).click();
+  await page.locator('nav.tabs').getByRole('link', { name: /Memories/ }).click();
   await page.getByText('Best afternoon ever').waitFor();
   await page.getByText('Again! Again!').waitFor();
   await page.screenshot({ path: `${SHOTS}/07-memories.png`, fullPage: true });
@@ -119,7 +120,7 @@ try {
   await page.goto(BASE + '#a/stargaze');
   await page.getByText('Backyard star party').waitFor();
   await page.keyboard.press('Escape');
-  await page.getByRole('link', { name: /Memories/ }).click();
+  await page.locator('nav.tabs').getByRole('link', { name: /Memories/ }).click();
   await page.getByText('Best afternoon ever').waitFor();
 
   // Plus sheet

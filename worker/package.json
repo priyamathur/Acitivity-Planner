@@ -1,0 +1,17 @@
+{
+  "name": "littleroam-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:site": "cd .. && rm -rf _site && mkdir _site && cp -r index.html manifest.webmanifest sw.js css js icons _site/",
+    "dev": "npm run build:site && wrangler dev",
+    "deploy": "npm run build:site && wrangler deploy"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0"
+  },
+  "devDependencies": {
+    "wrangler": "^4.147.0"
+  }
+}

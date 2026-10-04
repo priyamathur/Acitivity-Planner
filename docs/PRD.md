@@ -3,7 +3,7 @@
 **Product:** LittleRoam, a family activity planner (screen-free ideas, near-me adventures, family memories)
 **Version:** 1.0 (MVP), October 2026
 **Owner:** Product / Founder
-**Status:** MVP built and deployable (static PWA)
+**Status:** MVP live-ready. v1.1 adds the AI planner and Popular near you.
 
 > **How to read the numbers.** Every market figure below has a source and a confidence label. **[V]** means I checked it in a search result this session. **[U]** means it came from the brief or a secondary source and I could not confirm it against the primary source. My sandbox blocked access to Pinterest's newsroom, so check the **[U]** figures before you put them in a pitch deck.
 
@@ -104,12 +104,49 @@ Development apps stop at age 3–4, photo apps don't plan, and Pinterest doesn't
 | F12 | **Backup:** JSON export and import. Erase all. | Trust | ✅ |
 | F13 | **Plus pricing page:** shows planned pricing and captures interest. **No payments yet.** | Monetisation | ✅ (stub) |
 
+| F14 | **✨ AI planner (v1.1):** Claude chooses from the curated library using kids' ages, time, place, energy, weather, nearby places and local trends. Each pick comes with a "why". Parents can also ask free-form questions; for those, AI may write up to 3 new ideas. If AI is unavailable, the app falls back to the on-device engine. | Both | ✅ |
+| F15 | **👨‍👩‍👧 Popular with families near you (v1.1):** anonymous, opt-in counts of what families with kids in the same age band did within ~15 km over the last 30 days | Short | ✅ |
+
 ### Not in MVP (next)
-- Cloud accounts, sync and family sharing (needs a backend: Supabase or Firebase)
-- LLM-powered planner. The v1 "bot" is a **deterministic rules engine**, not an AI model. That keeps it free to run, private and instant.
+- Cloud accounts, sync and family sharing
+- Popular *places* nearby, not just activities. This needs extra privacy review, because place visits are location traces.
 - Local **events** (story-times, festivals). Needs licensed event feeds or partnerships.
 - Printable memory book, push reminders ("Saturday looks sunny, want a plan?")
 - Native Play Store and App Store builds
+
+## 6a. AI planner and "Popular near you" (v1.1)
+
+### Why AI here, and how it differs from a general chatbot
+The AI is grounded in three things a chatbot doesn't have:
+1. The **curated library**. The model picks library ids, and any idea it writes is labelled.
+2. **Real nearby places** from the app's map search.
+3. **Real anonymous local trends**.
+
+The server validates every answer:
+- It drops activity ids that don't exist and places it wasn't given.
+- It removes popularity claims the data doesn't support.
+- It clamps AI-written ideas to safe ranges.
+
+Parents never write a prompt; three taps are enough. Free-form "Ask" covers the long tail ("a calm idea for a 4-year-old with a broken arm"). This is the gap the rules engine couldn't fill.
+
+### Privacy and anti-comparison design
+Showing "what others are doing" sits in tension with principle 2 (no comparison anxiety). The design resolves it like this:
+- **Inspiration, not ranking.** We show *activities* other families enjoyed. Families are never shown, ranked or followed, and there are no likes or profiles.
+- **k-anonymity.** An activity appears only after ≥ `MIN_FAMILIES` distinct families (default 3) in the area and age band shared it. Totals below the threshold are hidden too.
+- **Data minimisation.** Each share contains only an activity id, age bands and a coarse grid cell (0.05° ≈ 5 km). Raw coordinates, names, notes and photos never leave the device. Device ids are hashed on the server.
+- **Opt-in at the moment of sharing.** A checkbox on the memory form explains exactly what is sent. AI-written ideas are never shared.
+- **Honest cold start.** When a neighbourhood has too little data, the app says so. We never show seeded or fake "families near you" data.
+
+### Cost and pricing implications
+These figures are estimates; check them against `usage` in production. Each suggestion sends roughly 3k input tokens (the system prompt with the 58-item catalogue, plus context) and gets back about 0.5–1.5k output tokens. With Claude Opus 5.5 ($4 / $20 per million tokens), that is about **$0.02–0.04 per suggestion**.
+
+At 1,000 families using AI twice a day, that comes to roughly $40–80/day. For that reason:
+- Free users get a small daily allowance (`AI_DAILY_LIMIT`, default 5). Unlimited AI is a core **Plus** feature.
+- The model is one setting (`AI_MODEL`). Cheaper models (Claude Sonnet 5.5 at $2 / $10, Claude Haiku 4.5 at $1 / $5) can be tested against an eval set before switching.
+- The cold-start problem for Popular near you is real. Launch city by city (parent groups, libraries) so neighbourhoods cross the threshold quickly.
+
+### Architecture
+Cloudflare Worker (static app + `/api/*`) → Durable Object with SQLite (anonymous events, AI rate limits) → Claude API using structured JSON output, low effort, and server-side refusal fallback. The API key exists only as a Worker secret.
 
 ## 7. Platform decision: web app (PWA) first, Play Store second
 
@@ -185,7 +222,7 @@ These are my starting hypotheses, not industry benchmarks. Instrument privacy-fr
 ## 12. Roadmap
 - **Week 1–2:** analytics, waitlist form (set `WAITLIST_URL`), 25 more activities, PWA install prompt
 - **Month 1:** Supabase auth and sync. Family sharing. Stripe for Plus. Reminders.
-- **Month 2:** Play Store (TWA), LLM planner (server-side, privacy-reviewed), local events pilot in 1–2 cities
+- **Month 2:** Play Store (TWA), AI eval set and model/cost tuning, local events pilot in 1–2 cities
 - **Month 3:** printable memory book, B2B library pilot
 
 ## 13. Technical architecture (MVP)

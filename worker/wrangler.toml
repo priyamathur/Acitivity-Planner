@@ -1,0 +1,26 @@
+# LittleRoam: serves the app (static assets) and the /api/* endpoints.
+name = "littleroam"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+# The built app (see `npm run build:site`). Requests that don't match a file fall through to the Worker.
+[assets]
+directory = "../_site"
+binding = "ASSETS"
+
+[[durable_objects.bindings]]
+name = "COMMUNITY"
+class_name = "Community"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Community"]
+
+[vars]
+# Model used for AI suggestions. Change to e.g. "claude-sonnet-5-5" or "claude-haiku-4-5" to cut cost.
+AI_MODEL = "claude-opus-5-5"
+# Free AI suggestions per family per day.
+AI_DAILY_LIMIT = "5"
+# A neighbourhood activity is only shown once at least this many distinct families shared it.
+MIN_FAMILIES = "3"
+# Secret (not here): ANTHROPIC_API_KEY — set with `wrangler secret put ANTHROPIC_API_KEY`.

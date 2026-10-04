@@ -76,3 +76,17 @@ test('overpass query + parsing', () => {
   assert.deepEqual(places.map((p) => p.name), ['Near Park', 'Far Park', 'Unnamed park']);
   assert.ok(Math.abs(haversineKm(origin, { lat: 47.61, lon: -122.3 }) - 1.11) < 0.02);
 });
+
+// ---------- Community privacy helpers ----------
+import { cellFor, neighbourCells, isValidCell, bandsForAges } from '../js/community.js';
+
+test('location is coarsened to a grid cell; neighbours cover edges', () => {
+  const c = cellFor({ lat: 47.6062, lon: -122.3321 });
+  assert.equal(c, '952:-2447');
+  assert.ok(isValidCell(c));
+  assert.equal(cellFor({ lat: 47.6099, lon: -122.3399 }), c, 'nearby points share a cell');
+  assert.equal(neighbourCells(c).length, 9);
+  assert.ok(neighbourCells(c).includes('953:-2446'));
+  assert.ok(!isValidCell('47.6,-122.3'));
+  assert.deepEqual(bandsForAges([2, 3, 5, 11]), ['0-3', '4-5', '9-12']);
+});
