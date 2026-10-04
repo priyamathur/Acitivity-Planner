@@ -54,19 +54,19 @@ try {
   await page.getByText(/Not enough families near you have shared yet.*at least 2 families/).waitFor();
 
   // Add Mia's swimming class.
-  await page.getByRole('button', { name: '+ Add', exact: true }).click();
+  await page.locator('#classes-btn').click();
   await page.fill('input[name=title]', "Mia's swimming");
   await page.fill('input[name=start]', '09:00');
   await page.fill('input[name=end]', '10:00');
   await page.locator('#cls').getByRole('button', { name: 'Add', exact: true }).click();
 
   // AI plan with a note.
-  await page.getByRole('button', { name: /Plan it with AI/ }).waitFor();
+  await page.locator('#wk-note').waitFor();
   await page.fill('#wk-note', 'Grandma visits Sunday lunch');
-  await page.getByRole('button', { name: /Plan it with AI/ }).click();
+  await page.getByRole('button', { name: /Plan our weekend/ }).click();
   await page.getByText(/A gentle weekend that works around your plans/).waitFor();
   await page.getByText(/AI plans left today/).waitFor();
-  if ((await page.locator('.plan-slot').count()) !== 4) fail('every free window should be filled (AI + library fallback)');
+  if ((await page.locator('.tl-act').count()) !== 4) fail('every free window should be filled (AI + library fallback)');
   const sat = page.locator('.day').nth(0);
   await sat.getByText('Nature scavenger hunt').waitFor();
   await sat.getByText('📍 Pioneer Square Playground').waitFor();
@@ -82,20 +82,21 @@ try {
   if (sent.includes('47.60') || sent.includes('-122.33')) fail('raw coordinates leaked to AI');
 
   // The AI-written idea: disclaimer; it can't be shared to the community.
-  await sat.getByText('Dinosaur dig in a tray').click();
+  await sat.locator('.tl-body', { hasText: 'Dinosaur dig in a tray' }).click();
   await page.getByText(/written by AI/).waitFor();
   await page.locator('#sheet-body').getByRole('button', { name: /We did it/ }).click();
   if (await page.locator('label.share').count()) fail('AI ideas must not be shareable');
   await page.getByRole('button', { name: 'Save memory' }).click();
 
   // Done on the library pick + share anonymously → crosses the threshold.
-  await page.locator('.plan-slot', { hasText: 'Nature scavenger hunt' }).getByRole('button', { name: '✅ We did it' }).click();
+  await page.locator('.tl-body', { hasText: 'Nature scavenger hunt' }).click();
+  await page.locator('#sheet-body').getByRole('button', { name: '✅ We did it' }).click();
   await page.locator('label.share input').check();
   await page.screenshot({ path: `${SHOTS}/11-share.png` });
   await page.getByRole('button', { name: 'Save memory' }).click();
   await page.waitForTimeout(300);
   await page.reload();
-  await page.getByText(/What 2 families with kids ages 4–5 near you/).waitFor();
+  await page.getByText(/Families with kids ages 4–5 near you, last 30 days/).waitFor();
   await page.locator('#popular').getByText('Nature scavenger hunt').waitFor();
   await page.locator('#popular').getByText('2 families did this').waitFor();
   await page.screenshot({ path: `${SHOTS}/12-popular.png`, fullPage: true });

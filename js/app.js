@@ -1,5 +1,5 @@
 import { ACTIVITIES, CATEGORIES, SEASONS } from './data.js';
-import { currentSeason, ageFromBirthYear, weatherBucket, weatherLabel, fitsAges, VIBES, weekendDays, bookedFor, freeWindows, fillWeekend, swapPick, classKind, toMin } from './planner.js';
+import { currentSeason, ageFromBirthYear, weatherBucket, weatherLabel, fitsAges, VIBES, weekDays, DAY_KEYS, DAY_NAMES, classDays, bookedFor, freeWindows, fillWeekend, swapPick, classKind, toMin } from './planner.js';
 import { PLACE_TYPES, findPlaces, geocode, getForecast, getPosition, directionsUrl, osmUrl } from './near.js';
 import * as store from './store.js';
 import * as api from './api.js';
@@ -79,39 +79,46 @@ function card(a, { compact = false, why = '', place = '' } = {}) {
     <button class="act-main" data-open="${a.id}" aria-label="Open ${esc(a.title)}">
       <span class="act-emoji" aria-hidden="true">${esc(a.emoji)}</span>
       <span class="act-text">
-        <strong>${esc(a.title)}${a.ai ? ' <span class="chip sm ai">✨ AI idea</span>' : ''}</strong>
-        <span class="meta">${CATEGORIES[a.cat].emoji} ${CATEGORIES[a.cat].label} · ${fmtMins(a.mins)} · ${settingLabel[a.setting]} · ages ${a.ages[0]}–${a.ages[1]}</span>
+        <strong>${esc(a.title)}${a.ai ? ' <span class="chip sm ai">AI</span>' : ''}</strong>
+        <span class="meta">${fmtMins(a.mins)} · ${settingLabel[a.setting]} · ages ${a.ages[0]}–${a.ages[1]}</span>
         ${why || place ? `<span class="why">${[why && esc(why), place && `📍 ${esc(place)}`].filter(Boolean).join(' · ')}</span>` : ''}
-        ${compact ? '' : `<span class="skills">${a.skills.map((s) => `<span class="chip sm">${esc(s)}</span>`).join('')}</span>`}
       </span>
     </button>
     <button class="icon-btn fav ${fav ? 'on' : ''}" data-fav="${a.id}" aria-pressed="${fav}" aria-label="Save ${esc(a.title)}">${fav ? '♥' : '♡'}</button>
   </article>`;
 }
 
-function openActivity(a, { fromLink = false } = {}) {
+function openActivity(a, { fromLink = false, slot = null } = {}) {
   if (!fromLink) history.replaceState(null, '', '#a/' + a.id);
   openSheet(`
     <div class="detail">
       <div class="detail-head"><span class="big-emoji">${esc(a.emoji)}</span>
         <div><h2>${esc(a.title)}</h2>
-        <p class="meta">${CATEGORIES[a.cat].emoji} ${CATEGORIES[a.cat].label} · ${fmtMins(a.mins)} · ${settingLabel[a.setting]} · ages ${a.ages[0]}–${a.ages[1]} · ${['No mess', 'A little mess', 'Messy!'][a.mess]}</p></div>
+        <p class="meta">${fmtMins(a.mins)} · ${settingLabel[a.setting]} · ages ${a.ages[0]}–${a.ages[1]}${a.mess === 2 ? ' · messy' : ''}</p></div>
       </div>
       <h3>You'll need</h3><ul class="list">${a.materials.map((m) => `<li>${esc(m)}</li>`).join('')}</ul>
       <h3>How to</h3><ol class="list steps">${a.steps.map((m) => `<li>${esc(m)}</li>`).join('')}</ol>
-      <h3>What they're learning</h3><p>${a.skills.map((s) => `<span class="chip">${esc(s)}</span>`).join(' ')}</p>
+      <p class="meta">Good for: ${a.skills.map(esc).join(', ')}</p>
       ${a.tip ? `<p class="tip">💡 ${esc(a.tip)}</p>` : ''}
       ${a.ai ? '<p class="fine">✨ This idea was written by AI for your family. Read it through first and use your own judgement on safety.</p>' : ''}
       <div class="row wrap gap">
-        <button class="btn primary" data-act="plan">🗓️ Add to our weekend</button>
-        <button class="btn" data-act="done">✅ We did it</button>
-        <button class="btn ghost" data-act="share">↗ Share</button>
+        ${slot ? `<button class="btn primary" data-act="done">✅ We did it</button>
+          <button class="btn" data-act="swap">🔄 Swap</button>
+          <button class="btn ghost danger" data-act="remove">Remove</button>`
+        : `<button class="btn primary" data-act="plan">🗓️ Add to our weekend</button>
+          <button class="btn" data-act="done">✅ We did it</button>
+          <button class="btn ghost" data-act="share">↗ Share</button>`}
       </div>
     </div>`,
   (el) => {
-    $('[data-act=done]', el).onclick = () => memoryForm({ activityId: a.id, title: a.title });
-    $('[data-act=plan]', el).onclick = () => addToWeekend(a);
-    $('[data-act=share]', el).onclick = () => share(a);
+    $('[data-act=done]', el).onclick = () => memoryForm({ activityId: a.id, title: a.title, date: slot?.date, onSaved: slot ? () => store.set((st) => (st.weekends[slot.key].done[slot.winId] = true)) : null });
+    if (slot) {
+      $('[data-act=swap]', el).onclick = () => { closeSheet(); swap(slot.winId); };
+      $('[data-act=remove]', el).onclick = () => { store.set((st) => delete st.weekends[slot.key].picks[slot.winId]); closeSheet(); renderWeekend($('#view')); };
+    } else {
+      $('[data-act=plan]', el).onclick = () => addToWeekend(a);
+      $('[data-act=share]', el).onclick = () => share(a);
+    }
   });
 }
 
@@ -145,107 +152,117 @@ document.addEventListener('click', (e) => {
 let weekendOffset = 0; // 0 = this weekend, 1 = next
 
 function weekendModel(offset = weekendOffset) {
-  const days = weekendDays(new Date(), offset).map((d) => {
+  const week = weekDays(new Date(), offset);
+  const weekdays = week.slice(0, 5).map((d) => ({ ...d, booked: bookedFor(S().classes, d) }));
+  const days = week.slice(5).map((d) => {
     const booked = bookedFor(S().classes, d);
     const f = forecast[d.date];
     const weather = f ? (['wet', 'snow'].includes(weatherBucket(f.code)) || f.rain >= 60 ? 'wet' : 'dry') : null;
     return { ...d, booked, windows: d.past ? [] : freeWindows(booked, d.key), forecast: f, weather };
   });
   const key = days[0].date;
-  return { key, days, plan: S().weekends[key] || null };
+  return { key, days, weekdays, week, plan: S().weekends[key] || null };
 }
 
 const kidName = (i) => (i === '' || i == null ? '' : S().family.kids[Number(i)]?.name || (S().family.kids.length > 1 ? `Child ${Number(i) + 1}` : ''));
-const weatherChip = (f) => (f ? `<span class="chip sm">${esc(weatherLabel(f.code))} · ${Math.round(f.max)}${esc(f.unit)}${f.rain >= 30 ? ` · ${f.rain}% rain` : ''}</span>` : '');
+const weatherIcon = (code) => (code == null ? '' : code === 0 ? '☀️' : code <= 3 ? '⛅' : code <= 48 ? '🌫️' : code >= 95 ? '⛈️' : (code >= 71 && code <= 77) || code === 85 || code === 86 ? '❄️' : '🌧️');
+const weatherShort = (f) => (f ? `${weatherIcon(f.code)} ${Math.round(f.max)}°${f.rain >= 50 ? ` · ${f.rain}% rain` : ''}` : '');
 
 function renderWeekend(root) {
-  const { key, days, plan } = weekendModel();
-  const s = S();
-  const hello = s.family.name ? `the ${esc(s.family.name)}s` : 'your family';
+  const { key, days, weekdays, plan } = weekendModel();
   const live = days.filter((d) => !d.past);
   const freeCount = live.reduce((n, d) => n + d.windows.length, 0);
+  const classCount = [...weekdays, ...days].reduce((n, d) => n + d.booked.length, 0);
+  const vibe = S().lastVibe || 'mix';
   root.innerHTML = `
-    <section class="hero">
-      <p class="eyebrow">${SEASONS[currentSeason()].emoji} ${fmtDate(days[0].date, { day: 'numeric', month: 'short' })} – ${fmtDate(days[1].date, { day: 'numeric', month: 'short' })}</p>
-      <h1>A weekend for ${hello}</h1>
-      <p class="lede">Add the classes you already have, and I'll fill the free time with screen-free adventures.</p>
-    </section>
-    <div class="seg two" role="tablist">
-      <button role="tab" data-wk="0" class="${weekendOffset === 0 ? 'on' : ''}" aria-selected="${weekendOffset === 0}">This weekend</button>
-      <button role="tab" data-wk="1" class="${weekendOffset === 1 ? 'on' : ''}" aria-selected="${weekendOffset === 1}">Next weekend</button>
-    </div>
-
-    <section class="card pad">
-      <div class="row space center-v"><h2 class="h0">🗓️ Classes &amp; plans</h2><button class="btn sm" id="add-class">+ Add</button></div>
-      ${days.map((d) => `<div class="booked-day"><strong class="meta">${d.name}${d.past ? ' (over)' : ''}</strong>
-        ${d.booked.length ? d.booked.map((c) => `<div class="row space center-v booked">
-          <span>${esc(classKind(c.title).emoji)} <strong>${esc(c.start)}–${esc(c.end)}</strong> ${esc(c.title)}${kidName(c.kid) ? ` <span class="chip sm">${esc(kidName(c.kid))}</span>` : ''}${c.repeat === 'once' ? ' <span class="chip sm">this week only</span>' : ''}${c.where ? `<span class="meta"> · ${esc(c.where)}</span>` : ''}</span>
-          <button class="icon-btn" data-edit-class="${c.id}" aria-label="Edit ${esc(c.title)}">✎</button></div>`).join('') : '<p class="meta">Nothing booked</p>'}</div>`).join('')}
+    <section class="wk-head">
+      <div>
+        <p class="eyebrow">${fmtDate(days[0].date, { day: 'numeric', month: 'short' })} – ${fmtDate(days[1].date, { day: 'numeric', month: 'short' })}</p>
+        <h1>${weekendOffset ? 'Next weekend' : 'This weekend'}</h1>
+      </div>
+      <div class="seg mini" role="tablist">
+        <button role="tab" data-wk="0" class="${weekendOffset === 0 ? 'on' : ''}" aria-selected="${weekendOffset === 0}">This</button>
+        <button role="tab" data-wk="1" class="${weekendOffset === 1 ? 'on' : ''}" aria-selected="${weekendOffset === 1}">Next</button>
+      </div>
     </section>
 
-    ${!plan ? `<section class="card pad plan-form">
-      <h2 class="h0">✨ Plan our weekend</h2>
-      ${freeCount ? `<p class="meta">${freeCount} free slot${freeCount > 1 ? 's' : ''} to fill${live.length < 2 ? ' (Saturday is over)' : ''}.</p>` : '<p class="meta">No free time left this weekend. Enjoy the classes!</p>'}
-      <div class="vibes" role="radiogroup" aria-label="What kind of weekend?">${Object.entries(VIBES).map(([k, v], i) => `<label class="vibe"><input type="radio" name="vibe" value="${k}" ${(s.lastVibe || 'mix') === k ? 'checked' : ''}/><span><b>${v.emoji} ${v.label}</b><small>${v.desc}</small></span></label>`).join('')}</div>
-      ${api.aiEnabled() ? `<label class="mt">Anything else I should know? <span class="meta">(optional)</span><input id="wk-note" class="input" maxlength="300" placeholder="e.g. Grandma visits Sunday lunch, Mia has a cold" /></label>
-        <p class="fine">For AI planning we send your note, kids' ages, class types and times (not names), the weather and nearby place names.</p>` : ''}
-      <button class="btn primary mt" id="plan-btn" ${freeCount ? '' : 'disabled'}>${api.aiEnabled() ? '✨ Plan it with AI' : '✨ Plan it for me'}</button>
+    <button class="card row-btn" id="classes-btn">
+      <span>🗓️ ${classCount ? `<b>${classCount} class${classCount > 1 ? 'es' : ''} this week</b>` : "<b>Add the kids' classes</b>"}</span>
+      <span class="meta">${classCount ? 'Edit' : 'Swimming, football…'} ›</span>
+    </button>
+
+    ${!plan ? `<section class="plan-form">
+      <div class="vibes" role="radiogroup" aria-label="What kind of weekend?">${Object.entries(VIBES).map(([k, v]) => `<label class="vibe"><input type="radio" name="vibe" value="${k}" ${vibe === k ? 'checked' : ''}/><span>${v.emoji} ${v.label}</span></label>`).join('')}</div>
+      ${api.aiEnabled() ? '<input id="wk-note" class="input" maxlength="300" placeholder="Anything I should know? (optional)" aria-label="Anything I should know?" />' : ''}
+      <button class="btn primary big" id="plan-btn" ${freeCount ? '' : 'disabled'}>${freeCount ? '✨ Plan our weekend' : 'No free time this weekend'}</button>
+      ${api.aiEnabled() ? '<p class="fine center">AI sees ages, class types and times, weather and nearby places. Never names.</p>' : ''}
     </section>` : ''}
 
     ${plan?.message ? `<p class="ai-msg">✨ ${esc(plan.message)}</p>` : ''}
-    <section id="timeline-wk">${plan ? days.map((d) => dayTimeline(d, plan)).join('') : ''}</section>
-    ${plan ? `<div class="row wrap gap">
+    <section id="timeline-wk">${plan ? days.map((d) => dayTimeline(d, plan)).join('') : days.filter((d) => d.booked.length && !d.past).map((d) => dayTimeline(d, { picks: {}, done: {} }, { preview: true })).join('')}</section>
+    ${plan ? `<div class="row gap center-row">
       <button class="btn primary" id="send-plan">↗ Send to my partner</button>
-      <button class="btn" id="replan">🔄 Re-plan</button>
-      <button class="btn ghost" id="clear-plan">Clear</button></div>` : ''}
+      <button class="btn ghost" id="replan">Re-plan</button></div>` : ''}
     <section id="popular"></section>`;
 
   $$('[data-wk]', root).forEach((b) => (b.onclick = () => { weekendOffset = Number(b.dataset.wk); renderWeekend(root); }));
-  $('#add-class', root).onclick = () => classForm();
-  $$('[data-edit-class]', root).forEach((b) => (b.onclick = () => classForm(S().classes.find((c) => c.id === b.dataset.editClass), days.find((d) => d.booked.some((c) => c.id === b.dataset.editClass)))));
+  $('#classes-btn', root).onclick = () => (classCount ? classesSheet() : classForm());
   const planBtn = $('#plan-btn', root);
   if (planBtn) planBtn.onclick = () => {
-    const vibe = $('input[name=vibe]:checked', root)?.value || 'mix';
-    store.set((st) => (st.lastVibe = vibe));
-    makePlan({ vibe, note: $('#wk-note', root)?.value.trim() || '' });
+    const v = $('input[name=vibe]:checked', root)?.value || 'mix';
+    store.set((st) => (st.lastVibe = v));
+    makePlan({ vibe: v, note: $('#wk-note', root)?.value.trim() || '' });
   };
   if (plan) {
     $('#replan', root).onclick = () => { store.set((st) => delete st.weekends[key]); renderWeekend(root); };
-    $('#clear-plan', root).onclick = () => { if (confirm('Clear this weekend\'s plan? Your classes stay.')) { store.set((st) => delete st.weekends[key]); renderWeekend(root); } };
     $('#send-plan', root).onclick = () => sharePlan(days, plan);
     $$('[data-swap]', root).forEach((b) => (b.onclick = () => swap(b.dataset.swap)));
-    $$('[data-rm-pick]', root).forEach((b) => (b.onclick = () => { store.set((st) => delete st.weekends[key].picks[b.dataset.rmPick]); renderWeekend(root); }));
     $$('[data-fill]', root).forEach((b) => (b.onclick = () => swap(b.dataset.fill)));
-    $$('[data-done-pick]', root).forEach((b) => (b.onclick = () => {
-      const [winId, date] = b.dataset.donePick.split('|');
-      const a = byId[plan.picks[winId].id];
-      memoryForm({ activityId: a.id, title: a.title, date, onSaved: () => store.set((st) => (st.weekends[key].done[winId] = true)) });
+    $$('[data-slot]', root).forEach((b) => (b.onclick = () => {
+      const [winId, date] = b.dataset.slot.split('|');
+      openActivity(byId[plan.picks[winId].id], { slot: { key, winId, date } });
     }));
   }
   renderPopular();
 }
 
-function dayTimeline(d, plan) {
-  if (d.past) return `<div class="day card pad past"><strong>${d.name}</strong> <span class="meta">${fmtDate(d.date)} · over</span></div>`;
-  const items = [
-    ...d.booked.map((c) => ({ t: c.s, html: `<div class="slot booked-slot"><span class="time">${esc(c.start)}–${esc(c.end)}</span>
-      <span class="slot-body">${esc(classKind(c.title).emoji)} <strong>${esc(c.title)}</strong>${kidName(c.kid) ? ` <span class="chip sm">${esc(kidName(c.kid))}</span>` : ''}${c.where ? `<span class="meta"> · ${esc(c.where)}</span>` : ''}</span></div>` })),
-    { t: toMin('12:30'), html: '<div class="slot lunch"><span class="time">12:30</span><span class="slot-body meta">🥪 Lunch &amp; rest</span></div>' },
-    ...d.windows.map((w) => {
+function dayTimeline(d, plan, { preview = false } = {}) {
+  if (d.past) return '';
+  const rows = [
+    ...d.booked.map((c) => ({ t: c.s, html: `<div class="tl-row tl-booked"><span class="time">${esc(c.start)}</span>
+      <span class="tl-body">${esc(classKind(c.title).emoji)} ${esc(c.title)}<span class="meta">${[kidName(c.kid), `until ${c.end}`].filter(Boolean).map(esc).join(' · ')}</span></span></div>` })),
+    ...(preview ? [] : d.windows.map((w) => {
       const p = plan.picks[w.id];
       const a = p && byId[p.id];
+      if (!a) return { t: toMin(w.start), html: `<div class="tl-row tl-free"><span class="time">${esc(w.start)}</span><button class="link sm" data-fill="${w.id}">+ Add something</button></div>` };
       const done = plan.done?.[w.id];
-      return { t: toMin(w.start), html: a ? `<div class="slot plan-slot ${done ? 'done' : ''}"><span class="time">${esc(w.start)}</span>
-        <div class="slot-body">${card(a, { compact: true, why: p.why, place: p.place })}
-        <div class="row gap-sm slot-actions">
-          <button class="btn sm" data-done-pick="${w.id}|${d.date}">${done ? '💛 Remembered' : '✅ We did it'}</button>
-          <button class="btn sm ghost" data-swap="${w.id}">🔄 Swap</button>
-          <button class="icon-btn" data-rm-pick="${w.id}" aria-label="Remove from plan" title="Remove">✕</button></div></div></div>`
-        : `<div class="slot free"><span class="time">${esc(w.start)}</span><span class="slot-body meta">Free until ${esc(w.end)}. Leave room for boredom, or <button class="link sm" data-fill="${w.id}">add something</button></span></div>` };
-    }),
+      return { t: toMin(w.start), html: `<div class="tl-row tl-act ${done ? 'done' : ''}"><span class="time">${esc(w.start)}</span>
+        <button class="tl-body" data-slot="${w.id}|${d.date}">${esc(a.emoji)} ${esc(a.title)}${done ? ' 💛' : ''}${a.ai ? ' <span class="chip sm ai">AI</span>' : ''}
+          <span class="meta">${[fmtMins(a.mins), p.place ? `📍 ${p.place}` : settingLabel[a.setting]].map(esc).join(' · ')}</span></button>
+        <button class="icon-btn" data-swap="${w.id}" aria-label="Swap ${esc(a.title)}" title="Swap">🔄</button></div>` };
+    })),
   ].sort((x, y) => x.t - y.t);
-  return `<div class="day card pad"><div class="row space center-v"><strong>${d.name} <span class="meta">${fmtDate(d.date, { day: 'numeric', month: 'short' })}</span></strong>${weatherChip(d.forecast)}</div>
-    ${items.map((i) => i.html).join('')}</div>`;
+  return `<div class="day"><div class="day-head"><strong>${d.name}</strong><span class="meta">${weatherShort(d.forecast)}</span></div>
+    ${rows.map((r) => r.html).join('')}</div>`;
+}
+
+// All classes for the week, grouped by day, in a sheet.
+function classesSheet() {
+  const { weekdays, days } = weekendModel();
+  const week = [...weekdays, ...days].filter((d) => d.booked.length);
+  openSheet(`<h2>Classes this week</h2>
+    ${week.map((d) => `<div class="cls-day ${d.past ? 'past' : ''}"><p class="meta">${d.name}${d.today ? ' · today' : d.past ? ' · done' : ''}</p>
+      ${d.booked.map((c) => `<button class="cls-row" data-edit-class="${c.id}|${d.date}">
+        <span>${esc(classKind(c.title).emoji)} ${esc(c.title)}<span class="meta">${[kidName(c.kid), c.where, c.repeat === 'once' ? 'this week only' : ''].filter(Boolean).map(esc).join(' · ')}</span></span>
+        <span class="meta">${esc(c.start)}–${esc(c.end)}</span></button>`).join('')}</div>`).join('')}
+    <button class="btn primary big" id="add-class">+ Add a class</button>`,
+  (el) => {
+    $('#add-class', el).onclick = () => classForm();
+    $$('[data-edit-class]', el).forEach((b) => (b.onclick = () => {
+      const [id, date] = b.dataset.editClass.split('|');
+      classForm(S().classes.find((c) => c.id === id), week.find((d) => d.date === date));
+    }));
+  });
 }
 
 async function makePlan({ vibe, note }) {
@@ -322,6 +339,12 @@ function addToWeekend(a) {
 
 function sharePlan(days, plan) {
   const lines = ['Our weekend 🌱'];
+  const { weekdays } = weekendModel();
+  const upcoming = weekdays.filter((d) => !d.past && d.booked.length);
+  if (upcoming.length) {
+    lines.push('', 'Classes this week');
+    for (const d of upcoming) for (const c of d.booked) lines.push(`${d.name.slice(0, 3)} ${c.start}–${c.end} ${classKind(c.title).emoji} ${c.title}${kidName(c.kid) ? ` (${kidName(c.kid)})` : ''}`);
+  }
   for (const d of days.filter((x) => !x.past)) {
     lines.push('', `${d.name} ${fmtDate(d.date, { day: 'numeric', month: 'short' })}`);
     const rows = [
@@ -336,22 +359,23 @@ function sharePlan(days, plan) {
 // ---------------- Classes & one-off plans ----------------
 function classForm(c = null, day = null) {
   const kids = S().family.kids;
-  const { days } = weekendModel();
+  const { week } = weekendModel();
   const isNew = !c;
-  c ??= { title: '', kid: kids.length === 1 ? '0' : '', day: 'sat', start: '09:00', end: '10:00', where: '', repeat: 'weekly' };
+  c ??= { title: '', kid: kids.length === 1 ? '0' : '', days: ['sat'], start: '09:00', end: '10:00', where: '', repeat: 'weekly' };
+  const chosen = classDays(c);
   openSheet(`<h2>${isNew ? 'Add a class or plan' : 'Edit'}</h2>
     <form id="cls" class="col gap">
       <label>What is it?<input class="input" name="title" required maxlength="60" value="${esc(c.title)}" placeholder="Swimming, football, ballet, birthday party…" /></label>
       ${kids.length ? `<label>Who's going?<select class="input" name="kid"><option value="">Everyone</option>${kids.map((k, i) => `<option value="${i}" ${String(c.kid) === String(i) ? 'selected' : ''}>${esc(k.name || `Child ${i + 1}`)} (${ageFromBirthYear(k.birthYear)})</option>`).join('')}</select></label>` : ''}
+      <fieldset><legend>Which day${c.repeat === 'once' ? '' : 's'}?</legend><div class="day-chips">${DAY_KEYS.map((k) => `<label class="day-chip"><input type="checkbox" name="days" value="${k}" ${chosen.includes(k) ? 'checked' : ''}/><span>${DAY_NAMES[k].slice(0, 3)}</span></label>`).join('')}</div></fieldset>
       <div class="row gap">
-        <label class="grow day-pick">Day<select class="input" name="day"><option value="sat" ${c.day === 'sat' ? 'selected' : ''}>Saturday</option><option value="sun" ${c.day === 'sun' ? 'selected' : ''}>Sunday</option></select></label>
         <label>From<input class="input" type="time" name="start" required value="${esc(c.start)}" step="900" /></label>
         <label>To<input class="input" type="time" name="end" required value="${esc(c.end)}" step="900" /></label>
       </div>
       <label>Where? <span class="meta">(optional)</span><input class="input" name="where" maxlength="60" value="${esc(c.where)}" placeholder="Leisure centre" /></label>
       <fieldset class="row gap wrap"><legend>How often?</legend>
         <label class="radio"><input type="radio" name="repeat" value="weekly" ${c.repeat !== 'once' ? 'checked' : ''}/> Every week</label>
-        <label class="radio"><input type="radio" name="repeat" value="once" ${c.repeat === 'once' ? 'checked' : ''}/> This weekend only</label>
+        <label class="radio"><input type="radio" name="repeat" value="once" ${c.repeat === 'once' ? 'checked' : ''}/> This week only</label>
       </fieldset>
       <button class="btn primary">${isNew ? 'Add' : 'Save'}</button>
       ${!isNew ? `<div class="row gap wrap">${c.repeat !== 'once' && day ? `<button type="button" class="btn ghost" id="skip">Skip on ${fmtDate(day.date)} only</button>` : ''}<button type="button" class="btn ghost danger" id="del">Delete</button></div>` : ''}
@@ -360,12 +384,16 @@ function classForm(c = null, day = null) {
     $('#cls', el).onsubmit = (e) => {
       e.preventDefault();
       const f = new FormData(e.target);
-      const v = { title: String(f.get('title')).trim(), kid: String(f.get('kid') ?? ''), day: f.get('day'), start: f.get('start'), end: f.get('end'), where: String(f.get('where')).trim(), repeat: f.get('repeat') };
+      const v = { title: String(f.get('title')).trim(), kid: String(f.get('kid') ?? ''), days: DAY_KEYS.filter((k) => f.getAll('days').includes(k)), start: f.get('start'), end: f.get('end'), where: String(f.get('where')).trim(), repeat: f.get('repeat') };
+      if (!v.days.length) return toast('Pick at least one day.');
       if (toMin(v.end) <= toMin(v.start)) return toast('The end time needs to be after the start time.');
-      if (v.repeat === 'once') v.date = days.find((d) => d.key === v.day).date;
+      if (v.repeat === 'once') {
+        if (v.days.length > 1) return toast('A one-off plan happens on one day. Pick a single day, or choose "Every week".');
+        v.date = week.find((d) => d.key === v.days[0]).date;
+      }
       store.set((s) => {
         if (isNew) s.classes.push({ id: store.uid(), ...v });
-        else Object.assign(s.classes.find((x) => x.id === c.id), v);
+        else { const x = s.classes.find((y) => y.id === c.id); delete x.day; Object.assign(x, v); }
       });
       closeSheet();
       toast(isNew ? `${classKind(v.title).emoji} ${v.title} added` : 'Saved');
@@ -423,21 +451,19 @@ async function renderPopular() {
   if (!el || !api.communityEnabled()) return;
   const loc = S().location;
   const bands = bandsForAges(kidAges());
+  const head = '<h2 class="h">Popular with families near you</h2>';
   if (!loc || !bands.length) {
-    el.innerHTML = `<h2 class="h">👨‍👩‍👧 Popular with families near you</h2>
-      <p class="meta">${!loc ? 'Set your area in <a href="#near">Near me</a>' : 'Add your kids\' ages in ⚙️ settings'} to see what families with kids the same age are doing nearby.</p>`;
+    el.innerHTML = `${head}<p class="meta">${!loc ? 'Set your area in <a href="#near">Near me</a>' : 'Add your kids\' ages in ⚙️ settings'} to see what families nearby enjoy.</p>`;
     return;
   }
-  el.innerHTML = '<h2 class="h">👨‍👩‍👧 Popular with families near you</h2><p class="meta">Loading…</p>';
   try {
     const t = await api.getTrends(cellFor(loc), bands);
     const acts = t.activities.map((x) => ({ a: byId[x.activity], n: x.families })).filter((x) => x.a);
     const where = loc.label === 'Your location' ? 'you' : esc(loc.label);
-    el.innerHTML = `<h2 class="h">👨‍👩‍👧 Popular with families near you</h2>
-      ${acts.length
-        ? `<p class="meta">What ${t.families} families with kids ${bands.map(bandLabel).join(' & ')} near ${where} shared in the last 30 days.</p>
-           ${acts.slice(0, 5).map(({ a, n }) => card(a, { compact: true, why: `${n} families did this` })).join('')}`
-        : `<p class="meta">Not enough families near ${where} have shared yet. We only show an activity once at least ${api.minFamilies()} families have done it, so nobody can be identified. When you save a memory, you can add it anonymously to help.</p>`}`;
+    el.innerHTML = head + (acts.length
+      ? `<p class="meta">Families with kids ${bands.map(bandLabel).join(' & ')} near ${where}, last 30 days</p>
+         <div class="pop-list">${acts.slice(0, 5).map(({ a, n }) => `<button class="pop-row" data-open="${a.id}"><span>${esc(a.emoji)} ${esc(a.title)}</span><span class="meta">${n} families did this</span></button>`).join('')}</div>`
+      : `<p class="meta">Not enough families near ${where} have shared yet. An activity shows up once at least ${api.minFamilies()} families have done it, so nobody can be identified.</p>`);
   } catch {
     el.innerHTML = '';
   }
@@ -532,7 +558,7 @@ let ideaFilter = { cat: 'all', setting: 'all', q: '', forKids: true };
 function renderIdeas(root) {
   const ages = kidAges();
   root.innerHTML = `
-    <section class="hero"><h1>Idea library</h1><p class="lede">${ACTIVITIES.length} screen-free activities, each with steps, materials and what kids learn.</p></section>
+    <section class="hero"><h1>Idea library</h1><p class="lede">${ACTIVITIES.length} screen-free ideas for the weekend.</p></section>
     <input class="input" id="q" type="search" placeholder="Search: slime, baking, rainy…" value="${esc(ideaFilter.q)}" aria-label="Search ideas" />
     <div class="chips-scroll">${[['all', '✨ All'], ...Object.entries(CATEGORIES).map(([k, c]) => [k, `${c.emoji} ${c.label}`]), ['favs', '♥ Saved']].map(([k, l]) => `<button class="chip-btn ${ideaFilter.cat === k ? 'on' : ''}" data-cat="${k}">${l}</button>`).join('')}</div>
     <div class="row gap wrap center-v">

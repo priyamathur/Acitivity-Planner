@@ -48,7 +48,7 @@ try {
   await page.fill('.kid >> nth=1 >> input[name=kname]', 'Leo');
   await page.selectOption('.kid >> nth=1 >> select[name=kyear]', '2018');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
-  await page.getByText('A weekend for the Mathurs').waitFor();
+  await page.getByRole('heading', { name: 'This weekend' }).waitFor();
   await page.getByText('10 Oct – 11 Oct').waitFor();
 
   // Location (for weather + places)
@@ -59,74 +59,104 @@ try {
   await page.screenshot({ path: `${SHOTS}/04-near.png`, fullPage: true });
   await page.locator('nav.tabs').getByRole('link', { name: /Weekend/ }).click();
 
-  // Add a weekly class and a one-off party
-  async function addClass({ title, kid, day, start, end, once = false }) {
-    await page.getByRole('button', { name: '+ Add', exact: true }).click();
+  async function openClassForm() {
+    await page.locator('#classes-btn').click();
+    if (await page.locator('#sheet-body #add-class').count()) await page.locator('#sheet-body #add-class').click();
+  }
+  async function addClass({ title, kid, days, start, end, once = false }) {
+    await openClassForm();
     await page.fill('input[name=title]', title);
     await page.selectOption('select[name=kid]', { label: kid });
-    await page.selectOption('select[name=day]', day);
+    for (const k of ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']) await page.locator(`input[name=days][value=${k}]`).setChecked(days.includes(k), { force: true });
     await page.fill('input[name=start]', start);
     await page.fill('input[name=end]', end);
-    if (once) await page.getByLabel('This weekend only').check();
+    if (once) await page.getByLabel('This week only').check();
     await page.locator('#cls').getByRole('button', { name: 'Add', exact: true }).click();
   }
-  await addClass({ title: 'Swimming', kid: 'Mia (5)', day: 'sat', start: '09:00', end: '10:00' });
-  await addClass({ title: "Sam's birthday party", kid: 'Everyone', day: 'sat', start: '14:00', end: '16:00', once: true });
+  await addClass({ title: 'Swimming', kid: 'Mia (5)', days: ['sat'], start: '09:00', end: '10:00' });
+  await addClass({ title: "Sam's birthday party", kid: 'Everyone', days: ['sat'], start: '14:00', end: '16:00', once: true });
+  // Weekday class on two days: counted for the week, doesn't touch weekend time.
+  await addClass({ title: 'Football', kid: 'Leo (8)', days: ['tue', 'thu'], start: '16:00', end: '17:00' });
+  await page.getByText('4 classes this week').waitFor();
+  // Booked classes preview on the timeline before planning.
+  await page.locator('#timeline-wk').getByText("Sam's birthday party").waitFor();
+  // The week sheet groups by day; Tuesday is over.
+  await page.locator('#classes-btn').click();
+  await page.locator('.cls-day.past', { hasText: 'Tuesday' }).getByText('Football').waitFor();
+  await page.locator('.cls-day', { hasText: 'Thursday' }).getByText('Football').waitFor();
   await page.getByText('this week only').waitFor();
-  await page.getByText(/4 free slots to fill/).waitFor();
+  // Edge cases in the form: a one-off can only be on one day; no day; end before start.
+  await page.locator('#sheet-body #add-class').click();
+  await page.fill('input[name=title]', 'Dentist');
+  await page.locator('input[name=days][value=sat]').setChecked(false, { force: true });
+  await page.locator('#cls').getByRole('button', { name: 'Add', exact: true }).click();
+  await page.getByText('Pick at least one day.').waitFor();
+  await page.locator('input[name=days][value=mon]').check({ force: true });
+  await page.locator('input[name=days][value=tue]').check({ force: true });
+  await page.getByLabel('This week only').check();
+  await page.locator('#cls').getByRole('button', { name: 'Add', exact: true }).click();
+  await page.getByText(/one-off plan happens on one day/).waitFor();
+  await page.locator('input[name=days][value=tue]').setChecked(false, { force: true });
+  await page.fill('input[name=start]', '15:00');
+  await page.fill('input[name=end]', '14:00');
+  await page.locator('#cls').getByRole('button', { name: 'Add', exact: true }).click();
+  await page.getByText(/end time needs to be after/).waitFor();
+  await page.locator('[data-close]').click();
   await page.screenshot({ path: `${SHOTS}/02-weekend-setup.png`, fullPage: true });
 
   // Plan it (no server → on-device engine)
   await page.getByText('Big adventure').click();
-  await page.getByRole('button', { name: /Plan it for me/ }).click();
-  await page.locator('.plan-slot').first().waitFor();
-  if ((await page.locator('.plan-slot').count()) !== 4) fail('expected 4 planned slots');
-  await page.getByText(/Rain · 12°C/).waitFor();
-  const sat = page.locator('.day').nth(0);
-  const satText = await sat.innerText();
-  for (const t of ['09:00–10:00', 'Swimming', '10:15', '12:30', "Sam's birthday party", '16:15']) if (!satText.includes(t)) fail(`Saturday timeline missing ${t}`);
+  await page.getByRole('button', { name: /Plan our weekend/ }).click();
+  await page.locator('.tl-act').first().waitFor();
+  if ((await page.locator('.tl-act').count()) !== 4) fail('expected 4 planned slots');
+  await page.getByText(/12° · 85% rain/).waitFor();
+  const satText = await page.locator('.day').nth(0).innerText();
+  for (const t of ['09:00', 'Swimming', 'until 10:00', '10:15', "Sam's birthday party", '16:15']) if (!satText.includes(t)) fail(`Saturday timeline missing ${t}`);
   if (satText.indexOf('Swimming') > satText.indexOf('10:15')) fail('timeline not in time order');
+  if (satText.includes('Football')) fail('weekday class shown on the weekend');
   await page.screenshot({ path: `${SHOTS}/03-plan.png`, fullPage: true });
 
   // Swap the first slot
-  const firstTitle = await page.locator('.plan-slot .act-text strong').first().innerText();
-  await page.getByRole('button', { name: '🔄 Swap' }).first().click();
-  const swapped = await page.locator('.plan-slot .act-text strong').first().innerText();
-  if (swapped === firstTitle) fail('swap did not change the activity');
+  const firstTitle = await page.locator('.tl-act .tl-body').first().innerText();
+  await page.locator('.tl-act [data-swap]').first().click();
+  if ((await page.locator('.tl-act .tl-body').first().innerText()) === firstTitle) fail('swap did not change the activity');
 
-  // Mark done → memory dated Saturday
-  await page.getByRole('button', { name: '✅ We did it' }).first().click();
+  // Tap a slot → details → We did it → memory dated Saturday
+  await page.locator('.tl-act .tl-body').first().click();
+  await page.locator('#sheet-body').getByRole('button', { name: '✅ We did it' }).click();
   if ((await page.inputValue('input[name=date]')) !== '2026-10-10') fail('memory should default to the slot date');
   await page.fill('textarea[name=note]', 'Best Saturday ever');
   await page.fill('textarea[name=quote]', 'Again! Again!');
   await page.getByRole('button', { name: 'Save memory' }).click();
-  await page.getByRole('button', { name: '💛 Remembered' }).waitFor();
+  await page.locator('.tl-act.done').waitFor();
 
-  // Remove a slot, then refill it
-  await page.locator('[data-rm-pick]').nth(1).click();
-  await page.getByText(/Free until/).waitFor();
-  await page.getByRole('button', { name: 'add something' }).click();
-  if ((await page.locator('.plan-slot').count()) !== 4) fail('refill failed');
+  // Remove a slot from its details, then refill it
+  await page.locator('.tl-act .tl-body').nth(1).click();
+  await page.locator('#sheet-body').getByRole('button', { name: 'Remove' }).click();
+  await page.getByRole('button', { name: '+ Add something' }).click();
+  if ((await page.locator('.tl-act').count()) !== 4) fail('refill failed');
 
   // Send to partner (clipboard fallback)
   await page.getByRole('button', { name: /Send to my partner/ }).click();
   const clip = await page.evaluate(() => navigator.clipboard.readText());
-  for (const t of ['Our weekend', 'Saturday 10 Oct', '09:00–10:00 🏊 Swimming (Mia)', "🎉 Sam's birthday party", 'Sunday 11 Oct']) if (!clip.includes(t)) fail(`shared text missing ${t}: ${clip}`);
+  for (const t of ['Our weekend', 'Classes this week', 'Thu 16:00–17:00 ⚽ Football (Leo)', 'Saturday 10 Oct', '09:00–10:00 🏊 Swimming (Mia)', "🎉 Sam's birthday party", 'Sunday 11 Oct']) if (!clip.includes(t)) fail(`shared text missing ${t}: ${clip}`);
+  if (clip.includes('Tue 16:00')) fail('past weekday class in shared text');
 
   // Next weekend: one-off party gone, swimming stays, no plan yet
-  await page.getByRole('tab', { name: 'Next weekend' }).click();
+  await page.getByRole('tab', { name: 'Next' }).click();
   await page.getByText('17 Oct – 18 Oct').waitFor();
   if (await page.getByText("Sam's birthday party").count()) fail('one-off plan leaked into next weekend');
-  await page.getByText('Swimming').first().waitFor();
-  await page.getByRole('button', { name: /Plan it for me/ }).waitFor();
+  await page.locator('#timeline-wk').getByText('Swimming').waitFor();
+  await page.getByRole('button', { name: /Plan our weekend/ }).waitFor();
 
   // Skip swimming next weekend only
-  await page.locator('[data-edit-class]').first().click();
+  await page.locator('#classes-btn').click();
+  await page.locator('.cls-day', { hasText: 'Saturday' }).getByText('Swimming').click();
   await page.getByRole('button', { name: /Skip on Sat,? 17 Oct only/ }).click();
-  await page.getByText(/5 free slots|4 free slots/).waitFor();
-  if (await page.locator('.booked-day').first().getByText('Swimming').count()) fail('skip did not apply');
-  await page.getByRole('tab', { name: 'This weekend' }).click();
-  await page.locator('.booked-day').first().getByText('Swimming').waitFor();
+  await page.waitForTimeout(200);
+  if (await page.locator('#timeline-wk').getByText('Swimming').count()) fail('skip did not apply');
+  await page.getByRole('tab', { name: 'This' }).click();
+  await page.locator('#timeline-wk').getByText('Swimming').waitFor();
 
   // Ideas → add to weekend
   await page.locator('nav.tabs').getByRole('link', { name: /Ideas/ }).click();
@@ -160,7 +190,7 @@ try {
   await page.getByText('Backyard star party').waitFor();
   await page.keyboard.press('Escape');
   await page.locator('nav.tabs').getByRole('link', { name: /Weekend/ }).click();
-  await page.locator('.plan-slot').first().waitFor();
+  await page.locator('.tl-act').first().waitFor();
   await page.getByText("Sam's birthday party").first().waitFor();
 
   // Plus sheet

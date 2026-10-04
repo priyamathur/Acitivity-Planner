@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ACTIVITIES, CATEGORIES } from '../js/data.js';
-import { recommend, score, weatherBucket, currentSeason, haversineKm, weekendDays, bookedFor, freeWindows, fillWeekend, swapPick, classKind } from '../js/planner.js';
+import { recommend, score, weatherBucket, currentSeason, haversineKm, weekendDays, weekDays, classDays, bookedFor, freeWindows, fillWeekend, swapPick, classKind } from '../js/planner.js';
 import { buildQuery, parsePlaces, PLACE_TYPES } from '../js/near.js';
 
 test('activity library is well-formed', () => {
@@ -59,6 +59,29 @@ const classes = [
   { id: 'b', title: 'Birthday party', kid: '', day: 'sat', start: '14:00', end: '16:00', repeat: 'once', date: '2026-10-10' },
   { id: 'c', title: 'Ballet', kid: '1', day: 'sun', start: '10:00', end: '11:00', repeat: 'weekly', skip: { '2026-10-11': true } },
 ];
+
+test('weekDays: Monday–Sunday around the weekend, with past/today flags', () => {
+  const w = weekDays(new Date(2026, 9, 7)); // Wednesday
+  assert.deepEqual(w.map((d) => d.key), ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']);
+  assert.deepEqual(w.map((d) => d.date), ['2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09', '2026-10-10', '2026-10-11']);
+  assert.deepEqual(w.map((d) => (d.past ? 'p' : d.today ? 't' : '-')).join(''), 'ppt----');
+  assert.equal(weekDays(new Date(2026, 9, 11))[0].date, '2026-10-05', 'Sunday belongs to the week that started Monday');
+  assert.equal(weekDays(new Date(2026, 9, 11), 1)[0].date, '2026-10-12');
+});
+
+test('weekday classes on several days; old single-day saves still work', () => {
+  const week = weekDays(new Date(2026, 9, 7));
+  const list = [
+    { id: 'f', title: 'Football', days: ['tue', 'thu'], start: '16:00', end: '17:00', repeat: 'weekly' },
+    { id: 'old', title: 'Swimming', day: 'sat', start: '09:00', end: '10:00', repeat: 'weekly' },
+    { id: 'o', title: 'Dentist', days: ['fri'], start: '15:00', end: '15:30', repeat: 'once', date: '2026-10-09' },
+  ];
+  const on = (key) => bookedFor(list, week.find((d) => d.key === key)).map((c) => c.id);
+  assert.deepEqual([on('mon'), on('tue'), on('thu'), on('fri'), on('sat')], [[], ['f'], ['f'], ['o'], ['old']]);
+  assert.deepEqual(classDays({ day: 'sun' }), ['sun']);
+  // Weekday classes never take weekend free time.
+  assert.equal(freeWindows(bookedFor(list, week[6]), 'sun').length, 2);
+});
 
 test('classes: weekly, one-off and skipped weeks', () => {
   const [sat, sun] = weekendDays(new Date(2026, 9, 7));
