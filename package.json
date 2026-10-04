@@ -9,6 +9,7 @@
     "test": "node --test tests/unit.test.js tests/ai.test.js",
     "test:api": "node tests/api.test.mjs",
     "test:e2e": "node tests/e2e.mjs",
-    "test:e2e-ai": "node tests/e2e-ai.mjs"
+    "test:e2e-ai": "node tests/e2e-ai.mjs",
+    "test:e2e-chat": "node tests/e2e-chat.mjs"
   }
 }

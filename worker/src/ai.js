@@ -7,7 +7,7 @@ import { ACTIVITIES, CATEGORIES } from '../../js/data.js';
 
 const byId = Object.fromEntries(ACTIVITIES.map((a) => [a.id, a]));
 
-const CATALOG = ACTIVITIES.map((a) =>
+export const CATALOG = ACTIVITIES.map((a) =>
   `${a.id} | ${a.title} | ${a.cat} | ages ${a.ages[0]}-${a.ages[1]} | ${a.mins} min | ${a.setting} | ${a.energy} | mess ${a.mess} | weather ${a.weather} | ${a.skills.join(', ')}`,
 ).join('\n');
 

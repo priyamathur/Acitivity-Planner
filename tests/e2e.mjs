@@ -193,6 +193,11 @@ try {
   await page.locator('.tl-act').first().waitFor();
   await page.getByText("Sam's birthday party").first().waitFor();
 
+  // Chat without a server: explains it needs AI instead of failing
+  await page.locator('nav.tabs').getByRole('link', { name: /Chat/ }).click();
+  await page.getByText(/Chat uses AI, which is switched on/).waitFor();
+  if (await page.locator('#chat-input').count()) fail('chat input shown without AI');
+
   // Plus sheet
   await page.locator('#settings-btn').click();
   await page.getByRole('button', { name: /About LittleRoam Plus/ }).click();

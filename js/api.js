@@ -19,6 +19,7 @@ export async function checkHealth() {
 export const aiEnabled = () => Boolean(health?.ok && health.ai);
 export const communityEnabled = () => Boolean(health?.ok && health.community);
 export const minFamilies = () => health?.minFamilies ?? 3;
+export const chatEnabled = () => Boolean(health?.ok && health.chat);
 
 async function call(path, opts = {}) {
   const res = await fetch(new URL(path, BASE), {
@@ -38,3 +39,4 @@ async function call(path, opts = {}) {
 export const askAI = (body) => call('ai', { method: 'POST', body: JSON.stringify(body) });
 export const shareActivity = (body) => call('share', { method: 'POST', body: JSON.stringify(body) });
 export const getTrends = (cell, bands) => call(`trends?cell=${encodeURIComponent(cell)}&bands=${encodeURIComponent(bands.join(','))}`);
+export const chatStep = (body) => call('chat', { method: 'POST', body: JSON.stringify(body) });

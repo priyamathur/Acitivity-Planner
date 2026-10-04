@@ -32,7 +32,7 @@ function toast(msg) {
 }
 
 // ---------------- Routing ----------------
-const VIEWS = ['weekend', 'near', 'ideas', 'memories'];
+const VIEWS = ['weekend', 'chat', 'near', 'ideas', 'memories'];
 
 function route() {
   const hash = location.hash.slice(1) || 'weekend';
@@ -49,7 +49,7 @@ function show(view) {
   closeSheet();
   $('main').dataset.view = view;
   $$('.tab').forEach((t) => t.setAttribute('aria-current', t.dataset.view === view ? 'page' : 'false'));
-  const render = { weekend: renderWeekend, near: renderNear, ideas: renderIdeas, memories: renderMemories }[view];
+  const render = { weekend: renderWeekend, chat: renderChat, near: renderNear, ideas: renderIdeas, memories: renderMemories }[view];
   render($('#view'));
   $('#view').focus({ preventScroll: true });
   window.scrollTo(0, 0);
@@ -70,7 +70,7 @@ function closeSheet() {
   sheet.hidden = true;
   if (location.hash.startsWith('#a/')) history.replaceState(null, '', '#' + ($('main').dataset.view || 'weekend'));
 }
-const rerender = () => { const v = $('main').dataset.view; if (v) ({ weekend: renderWeekend, near: renderNear, ideas: renderIdeas, memories: renderMemories })[v]($('#view')); };
+const rerender = () => { const v = $('main').dataset.view; if (v) ({ weekend: renderWeekend, chat: renderChat, near: renderNear, ideas: renderIdeas, memories: renderMemories })[v]($('#view')); };
 
 // ---------------- Activity card & detail ----------------
 function card(a, { compact = false, why = '', place = '' } = {}) {
@@ -445,6 +445,263 @@ function saveCustoms(customs) {
   Object.assign(byId, ...customs.map((c) => ({ [c.id]: c })));
 }
 
+// ======================= Chat =======================
+// The conversation stays in memory (it holds Claude's raw content blocks, which
+// must be sent back unchanged). The changes it makes are saved like any other edit.
+const chat = { messages: [], log: [], busy: false, remaining: null };
+const CHAT_SUGGESTIONS = [
+  "There's a pumpkin festival nearby this Saturday, let's go",
+  "Leo's football on Thursday moved to 5–6pm",
+  "It's going to rain on Sunday. Make it cosy",
+  'Plan next weekend for us',
+];
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+const dayKeyOf = (iso) => DAY_KEYS[(new Date(iso + 'T12:00').getDay() + 6) % 7];
+const weekOffset = (w) => (w === 'next' ? 1 : 0);
+
+function describeItem(c) {
+  const when = c.repeat === 'once' ? `${fmtDate(c.date)}` : `every ${classDays(c).map((d) => DAY_NAMES[d].slice(0, 3)).join(' & ')}`;
+  return `${classKind(c.title).emoji} ${c.title} · ${when} ${c.start}–${c.end}${kidName(c.kid) ? ` · ${kidName(c.kid)}` : ''}`;
+}
+
+// What Claude sees about the family, sent with every message.
+function appStateText() {
+  const s = S();
+  const now = new Date();
+  const lines = [`Today: ${DAY_NAMES[dayKeyOf(store.isoDate(now))]} ${store.isoDate(now)}, ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`];
+  lines.push(`Area: ${s.location ? (s.location.label === 'Your location' ? 'set (from GPS, no city name)' : s.location.label) : 'not set (Near me tab)'}`);
+  lines.push(`Kids: ${s.family.kids.length ? s.family.kids.map((k, i) => `${k.name || `Child ${i + 1}`} (age ${ageFromBirthYear(k.birthYear)})`).join(', ') : 'not added yet'}`);
+  lines.push('Classes & events:');
+  lines.push(...(s.classes.length ? s.classes.map((c) => `- id ${c.id}: ${c.title} | ${c.repeat === 'once' ? `once on ${c.date}` : `weekly ${classDays(c).join(',')}`} ${c.start}-${c.end} | ${kidName(c.kid) || 'everyone'}${c.where ? ` | at ${c.where}` : ''}${c.skip ? ` | skipped: ${Object.keys(c.skip).join(',')}` : ''}`) : ['- none']));
+  for (const off of [0, 1]) lines.push(weekendStateText(off));
+  return `<app_state>\n${lines.join('\n')}\n</app_state>`;
+}
+
+function weekendStateText(off) {
+  const m = weekendModel(off);
+  const out = [`${off ? 'NEXT' : 'THIS'} WEEKEND (week "${off ? 'next' : 'this'}"):`];
+  for (const d of m.days) {
+    if (d.past) { out.push(`  ${d.name} ${d.date}: over`); continue; }
+    out.push(`  ${d.name} ${d.date}${d.forecast ? `, ${weatherLabel(d.forecast.code)} ${Math.round(d.forecast.max)}°, ${d.forecast.rain ?? 0}% rain` : ''}`);
+    out.push(`    booked: ${d.booked.length ? d.booked.map((c) => `${c.title} ${c.start}-${c.end}`).join('; ') : 'nothing'}`);
+    out.push(`    free slots: ${d.windows.length ? d.windows.map((w) => { const p = m.plan?.picks[w.id]; return `${w.id} (${w.start}-${w.end}, ${w.mins} min) → ${p && byId[p.id] ? `planned: ${p.id}` : 'empty'}`; }).join('; ') : 'none'}`);
+  }
+  return out.join('\n');
+}
+
+const fail = (error) => ({ ok: false, error });
+
+// Runs one tool call from Claude against the family's local data.
+async function runTool(name, input) {
+  const kids = S().family.kids;
+  const kidIndex = (who) => {
+    if (!who || /^(everyone|all|family)$/i.test(who)) return '';
+    const i = kids.findIndex((k) => (k.name || '').toLowerCase() === who.toLowerCase());
+    return i >= 0 ? String(i) : null;
+  };
+  const findItem = (id) => S().classes.find((c) => c.id === id);
+  switch (name) {
+    case 'add_to_calendar': {
+      const v = { title: String(input.title || '').trim().slice(0, 60), kind: input.kind === 'class' ? 'class' : 'event', start: input.start, end: input.end, where: String(input.where || '').trim().slice(0, 60), repeat: input.repeat === 'once' ? 'once' : 'weekly' };
+      if (!v.title) return fail('Missing title.');
+      if (!HHMM.test(v.start) || !HHMM.test(v.end) || toMin(v.end) <= toMin(v.start)) return fail('Times must be HH:MM and the end must be after the start.');
+      const kid = kidIndex(input.who);
+      if (kid === null) return fail(`No child called "${input.who}". Kids are: ${kids.map((k) => k.name).filter(Boolean).join(', ') || 'none named'}.`);
+      v.kid = kid;
+      if (v.repeat === 'once') {
+        if (!ISO_DATE.test(input.date || '')) return fail('A one-off event needs a date (YYYY-MM-DD).');
+        if (input.date < store.isoDate()) return fail('That date is in the past.');
+        v.date = input.date;
+        v.days = [dayKeyOf(input.date)];
+      } else {
+        v.days = DAY_KEYS.filter((k) => (input.days || []).includes(k));
+        if (!v.days.length) return fail('A weekly class needs at least one day.');
+      }
+      const item = { id: store.uid(), ...v };
+      store.set((s) => s.classes.push(item));
+      return { ok: true, id: item.id, added: describeItem(item), note: v.date && dayKeyOf(v.date) !== 'sat' && dayKeyOf(v.date) !== 'sun' ? 'This is on a weekday, so it shows in the week list, not the weekend plan.' : undefined };
+    }
+    case 'update_calendar_item': {
+      const c = findItem(input.id);
+      if (!c) return fail(`No item with id ${input.id}.`);
+      const next = { ...c };
+      if (input.title) next.title = String(input.title).slice(0, 60);
+      if (input.days?.length && c.repeat !== 'once') { next.days = DAY_KEYS.filter((k) => input.days.includes(k)); delete next.day; }
+      if (input.start) next.start = input.start;
+      if (input.end) next.end = input.end;
+      if (input.where) next.where = String(input.where).slice(0, 60);
+      if (input.who) { const k = kidIndex(input.who); if (k === null) return fail(`No child called "${input.who}".`); next.kid = k; }
+      if (!HHMM.test(next.start) || !HHMM.test(next.end) || toMin(next.end) <= toMin(next.start)) return fail('Times must be HH:MM and the end must be after the start.');
+      store.set((s) => Object.assign(s.classes.find((x) => x.id === c.id), next));
+      return { ok: true, updated: describeItem(next) };
+    }
+    case 'remove_calendar_item': {
+      const c = findItem(input.id);
+      if (!c) return fail(`No item with id ${input.id}.`);
+      store.set((s) => (s.classes = s.classes.filter((x) => x.id !== c.id)));
+      return { ok: true, removed: describeItem(c) };
+    }
+    case 'skip_class_once': {
+      const c = findItem(input.id);
+      if (!c) return fail(`No item with id ${input.id}.`);
+      if (c.repeat === 'once') return fail('That is a one-off event. Remove it instead.');
+      if (!ISO_DATE.test(input.date || '') || !classDays(c).includes(dayKeyOf(input.date))) return fail(`${c.title} doesn't happen on ${input.date}.`);
+      store.set((s) => { const x = s.classes.find((y) => y.id === c.id); (x.skip ??= {})[input.date] = true; });
+      return { ok: true, skipped: `${c.title} on ${fmtDate(input.date)}` };
+    }
+    case 'plan_weekend': {
+      const off = weekOffset(input.week);
+      const m = weekendModel(off);
+      const live = m.days.filter((d) => !d.past);
+      if (!live.some((d) => d.windows.length)) return fail('There are no free slots that weekend.');
+      const vibe = VIBES[input.vibe] ? input.vibe : 'mix';
+      const picks = fillWeekend(live, { ages: kidAges(), vibe, recentIds: S().recent, favIds: S().favs });
+      store.set((s) => { s.weekends[m.key] = { vibe, picks, done: {}, message: '' }; s.lastVibe = vibe; });
+      return { ok: true, planned: weekendStateText(off) };
+    }
+    case 'set_slot': {
+      const off = weekOffset(input.week);
+      const m = weekendModel(off);
+      const w = m.days.flatMap((d) => d.windows).find((x) => x.id === input.slot_id);
+      if (!w) return fail(`No free slot ${input.slot_id} that weekend. Free slots: ${m.days.flatMap((d) => d.windows).map((x) => x.id).join(', ') || 'none'}.`);
+      const a = byId[input.activity_id];
+      if (!a || a.ai) return fail(`Unknown activity id ${input.activity_id}. Use an id from the CATALOG.`);
+      if (a.mins > w.mins + 15) return fail(`${a.title} takes ${a.mins} min but that slot is only ${w.mins} min.`);
+      // No repeats in a weekend: if it's already planned elsewhere, move it here.
+      const movedFrom = Object.entries(m.plan?.picks || {}).filter(([k, p]) => p.id === a.id && k !== w.id).map(([k]) => k);
+      store.set((s) => {
+        const pl = (s.weekends[m.key] ??= { vibe: s.lastVibe || 'mix', picks: {}, done: {}, message: '' });
+        for (const k of movedFrom) delete pl.picks[k];
+        pl.picks[w.id] = { id: a.id, why: String(input.reason || '').slice(0, 200) };
+        delete pl.done[w.id];
+      });
+      return { ok: true, set: `${w.id} → ${a.title}`, ...(movedFrom.length ? { moved_from: movedFrom, note: `${movedFrom.join(', ')} is now empty.` } : {}) };
+    }
+    case 'clear_slot': {
+      const m = weekendModel(weekOffset(input.week));
+      if (!m.plan?.picks[input.slot_id]) return fail(`Nothing planned in ${input.slot_id}.`);
+      store.set((s) => delete s.weekends[m.key].picks[input.slot_id]);
+      return { ok: true, cleared: input.slot_id };
+    }
+    case 'find_places': {
+      const loc = S().location;
+      if (!loc) return fail("The family hasn't set their area yet. Ask them to tap Near me → Use my location.");
+      if (!PLACE_TYPES[input.type]) return fail('Unknown place type.');
+      try {
+        const places = (await findPlaces(input.type, loc, input.radius_km || 5)).filter((p) => p.named).slice(0, 8);
+        return { ok: true, places: places.map((p) => ({ name: p.name, km: Number(p.km.toFixed(1)), free: p.fee === 'no' || undefined, toilets: p.toilets === 'yes' || undefined, hours: p.hours || undefined })) };
+      } catch (e) {
+        return fail(e.message);
+      }
+    }
+    default:
+      return fail(`Unknown tool ${name}.`);
+  }
+}
+
+// A one-line receipt shown in the chat for every change.
+function actionLabel(name, input, out) {
+  if (!out.ok) return null;
+  return {
+    add_to_calendar: () => `Added ${out.added}`,
+    update_calendar_item: () => `Updated ${out.updated}`,
+    remove_calendar_item: () => `Removed ${out.removed}`,
+    skip_class_once: () => `Skipping ${out.skipped}`,
+    plan_weekend: () => `Planned ${input.week === 'next' ? 'next' : 'this'} weekend (${VIBES[input.vibe]?.label || 'a bit of both'})`,
+    set_slot: () => `${byId[input.activity_id]?.emoji || ''} ${byId[input.activity_id]?.title} at ${input.slot_id.replace('sat@', 'Sat ').replace('sun@', 'Sun ')}`,
+    clear_slot: () => `Cleared ${input.slot_id.replace('sat@', 'Sat ').replace('sun@', 'Sun ')}`,
+    find_places: () => null,
+  }[name]?.() ?? null;
+}
+
+function renderChat(root) {
+  if (!api.chatEnabled()) {
+    root.innerHTML = `<section class="hero"><h1>Chat</h1>
+      <p class="lede">Just tell LittleRoam what's going on ("there's a pumpkin festival on Saturday, let's go") and it updates your plan.</p></section>
+      <p class="empty">Chat uses AI, which is switched on when the app runs on its server with an AI key. Everything else works without it.</p>`;
+    return;
+  }
+  root.innerHTML = `
+    <section class="chat-head"><h1>Chat</h1>${chat.log.length ? '<button class="btn sm ghost" id="chat-new">New chat</button>' : ''}</section>
+    <section class="chat-log" id="chat-log" aria-live="polite">
+      ${chat.log.length ? '' : `<p class="meta">Tell me what's going on and I'll update your plan. I can add events and classes, look events up online, move things around and plan a weekend.</p>
+        <div class="chat-suggest">${CHAT_SUGGESTIONS.map((t) => `<button class="chip-btn" data-suggest="${esc(t)}">${esc(t)}</button>`).join('')}</div>`}
+    </section>
+    <form id="chat-form" class="chat-form">
+      <input id="chat-input" class="input grow" autocomplete="off" maxlength="600" placeholder="Message LittleRoam…" aria-label="Message" ${chat.busy ? 'disabled' : ''} />
+      <button class="btn primary" ${chat.busy ? 'disabled' : ''}>Send</button>
+    </form>
+    <p class="fine chat-fine">Chat sends your message and your family plan (kids' nicknames, ages, classes) to Claude, and may search the web. No photos or memories.</p>`;
+  const log = $('#chat-log', root);
+  chat.log.forEach((entry, i) => { const el = chatEntry(entry); if (i === chat.log.length - 1) el.classList.add('fresh'); log.append(el); });
+  if (chat.busy) log.append(chatEntry({ who: 'typing' }));
+  log.lastElementChild?.scrollIntoView({ block: 'end' });
+  $('#chat-form', root).onsubmit = (e) => { e.preventDefault(); const v = $('#chat-input', root).value.trim(); if (v) sendChat(v); };
+  $$('[data-suggest]', root).forEach((b) => (b.onclick = () => { $('#chat-input', root).value = b.dataset.suggest; $('#chat-input', root).focus(); }));
+  const nw = $('#chat-new', root);
+  if (nw) nw.onclick = () => { Object.assign(chat, { messages: [], log: [], busy: false }); renderChat(root); };
+  if (!chat.busy) $('#chat-input', root).focus({ preventScroll: true });
+}
+
+function chatEntry(e) {
+  const el = document.createElement('div');
+  if (e.who === 'typing') { el.className = 'bubble bot'; el.innerHTML = '<span class="typing">Thinking…</span>'; return el; }
+  if (e.who === 'action') { el.className = 'chat-action'; el.textContent = `✓ ${e.text}`; return el; }
+  if (e.who === 'search') { el.className = 'chat-action search'; el.textContent = `🔎 Searched: ${e.text}`; return el; }
+  el.className = `bubble ${e.who === 'me' ? 'me' : 'bot'}${e.error ? ' error' : ''}`;
+  el.innerHTML = esc(e.text).replace(/\n/g, '<br>') + (e.sources?.length ? `<span class="sources">${e.sources.map((s) => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title || new URL(s.url).hostname)}</a>`).join(' · ')}</span>` : '');
+  return el;
+}
+
+function pushLog(entry) {
+  chat.log.push(entry);
+  if ($('main').dataset.view === 'chat') renderChat($('#view'));
+}
+
+async function sendChat(text) {
+  if (chat.busy) return;
+  if (chat.messages.length > 60) return pushLog({ who: 'bot', text: 'This chat is getting long. Tap "New chat" to start fresh (your plan is saved).', error: true });
+  chat.busy = true;
+  const mark = chat.messages.length;
+  chat.messages.push({ role: 'user', content: [{ type: 'text', text }, { type: 'text', text: appStateText() }] });
+  pushLog({ who: 'me', text });
+  try {
+    for (let step = 0; step < 10; step++) {
+      const res = await api.chatStep({ fam: famId(), messages: chat.messages });
+      if (res.remaining != null) chat.remaining = res.remaining;
+      chat.messages.push({ role: 'assistant', content: res.content });
+      for (const b of res.content) {
+        if (b.type === 'server_tool_use' && b.name === 'web_search') pushLog({ who: 'search', text: b.input?.query || 'the web' });
+        if (b.type === 'text' && b.text.trim()) {
+          const sources = [...new Map((b.citations || []).filter((c) => /^https?:\/\//.test(c.url || '')).map((c) => [c.url, { url: c.url, title: c.title }])).values()];
+          pushLog({ who: 'bot', text: b.text.trim(), sources });
+        }
+      }
+      if (res.stop_reason === 'refusal') { pushLog({ who: 'bot', text: "Sorry, I can't help with that one.", error: true }); break; }
+      if (res.stop_reason === 'pause_turn') continue; // a long web search: resume where it left off
+      if (res.stop_reason !== 'tool_use') break;
+      const results = [];
+      for (const b of res.content.filter((x) => x.type === 'tool_use')) {
+        let out;
+        try { out = await runTool(b.name, b.input || {}); } catch (e) { out = fail(e.message); }
+        const label = actionLabel(b.name, b.input || {}, out);
+        if (label) pushLog({ who: 'action', text: label });
+        results.push({ type: 'tool_result', tool_use_id: b.id, content: JSON.stringify(out), ...(out.ok ? {} : { is_error: true }) });
+      }
+      chat.messages.push({ role: 'user', content: results });
+    }
+  } catch (err) {
+    pushLog({ who: 'bot', text: err.message, error: true });
+    // Roll the conversation back to before this message so it stays valid
+    // (changes already made to the plan are kept and were shown as receipts).
+    chat.messages.length = mark;
+  } finally {
+    chat.busy = false;
+    if ($('main').dataset.view === 'chat') renderChat($('#view'));
+  }
+}
+
 // ---------------- Popular near you (anonymous, aggregated) ----------------
 async function renderPopular() {
   const el = $('#popular');
@@ -797,7 +1054,8 @@ route();
 loadForecast();
 // Turn on AI and Popular-near-you once we know the server supports them.
 api.checkHealth().then(() => {
-  if ((api.aiEnabled() || api.communityEnabled()) && $('main').dataset.view === 'weekend' && $('#sheet').hidden) renderWeekend($('#view'));
+  const v = $('main').dataset.view;
+  if ((api.aiEnabled() || api.communityEnabled()) && ['weekend', 'chat'].includes(v) && $('#sheet').hidden) rerender();
 });
 if (!S().onboarded && !location.hash.startsWith('#a/')) onboarding();
 

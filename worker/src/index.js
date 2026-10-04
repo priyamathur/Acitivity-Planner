@@ -3,6 +3,7 @@
 import { ACTIVITIES } from '../../js/data.js';
 import { isValidCell, isValidBand, neighbourCells } from '../../js/community.js';
 import { suggest, AIError } from './ai.js';
+import { chatStep, validMessages, isNewUserTurn } from './chat.js';
 
 export { Community } from './community.js';
 
@@ -20,9 +21,10 @@ async function sha256(s) {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
 }
 
-async function readJSON(request) {
-  if (Number(request.headers.get('content-length') || 0) > 16000) throw new Error('too large');
-  return request.json();
+async function readJSON(request, max = 16000) {
+  const text = await request.text();
+  if (text.length > max) throw new RangeError('too large');
+  return JSON.parse(text);
 }
 
 const famOk = (f) => typeof f === 'string' && /^[a-z0-9-]{8,64}$/i.test(f);
@@ -35,7 +37,7 @@ export default {
 
     try {
       if (url.pathname === '/api/health') {
-        return json({ ok: true, ai: Boolean(env.ANTHROPIC_API_KEY), community: true, aiDailyLimit: Number(env.AI_DAILY_LIMIT || 5), minFamilies: Number(env.MIN_FAMILIES || 3) });
+        return json({ ok: true, ai: Boolean(env.ANTHROPIC_API_KEY), chat: Boolean(env.ANTHROPIC_API_KEY), community: true, aiDailyLimit: Number(env.AI_DAILY_LIMIT || 5), chatDailyLimit: Number(env.CHAT_DAILY_LIMIT || 20), minFamilies: Number(env.MIN_FAMILIES || 3) });
       }
 
       // Anonymous "we did this" signal for Popular near you.
@@ -115,6 +117,30 @@ export default {
           return json({ ...result, remaining: usage.remaining });
         } catch (err) {
           await community.refund([famKey, ipKey]);
+          if (err instanceof AIError) return bad(err.message, err.status);
+          throw err;
+        }
+      }
+
+      // One step of the chat loop (the browser runs the tools and calls again).
+      if (url.pathname === '/api/chat' && request.method === 'POST') {
+        if (!env.ANTHROPIC_API_KEY) return bad('Chat needs AI, which is not enabled on this server.', 503);
+        let b;
+        try { b = await readJSON(request, 400000); } catch (e) { return bad(e instanceof RangeError ? 'This chat is too long. Please start a new chat.' : 'invalid request', 413); }
+        if (!famOk(b.fam) || !validMessages(b.messages)) return bad('invalid request');
+        const ip = await sha256(request.headers.get('cf-connecting-ip') || 'local');
+        const fam = await sha256(b.fam);
+        const limit = Number(env.CHAT_DAILY_LIMIT || 20);
+        const keys = isNewUserTurn(b.messages)
+          ? [{ key: `c:${fam}`, limit }, { key: `ci:${ip}`, limit: limit * 6 }]
+          : [{ key: `cs:${ip}`, limit: limit * 30 }]; // tool steps: generous, but bounded
+        const usage = await community.consume(keys);
+        if (!usage.ok) return json({ error: `You've sent today's ${limit} chat messages. Everything else in the app still works, and chat is back tomorrow.` }, 429);
+        try {
+          const step = await chatStep(env, b.messages);
+          return json({ ...step, remaining: isNewUserTurn(b.messages) ? usage.remaining : undefined });
+        } catch (err) {
+          if (isNewUserTurn(b.messages)) await community.refund(keys.map((k) => k.key));
           if (err instanceof AIError) return bad(err.message, err.status);
           throw err;
         }

@@ -31,6 +31,7 @@ try {
   await waitUp();
   const health = await (await fetch(BASE + '/api/health')).json();
   assert.equal(health.ai, true);
+  assert.equal(health.chat, true);
 
   // The app itself is served too.
   const home = await fetch(BASE + '/');
@@ -122,6 +123,36 @@ try {
   assert.match((await r.json()).error, /free AI plans/);
   // A different family still has quota.
   assert.equal((await post('/api/ai', { ...aiBody, fam: 'family-zzzz9' })).status, 200);
+
+  // --- Chat ---
+  const chatPost = (body) => post('/api/chat', body);
+  assert.equal((await chatPost({ fam: 'family-chat1', messages: [] })).status, 400, 'empty conversation');
+  assert.equal((await chatPost({ fam: 'family-chat1', messages: [{ role: 'assistant', content: 'hi' }] })).status, 400, 'must start with user');
+  assert.equal((await chatPost({ fam: 'family-chat1', messages: [{ role: 'system', content: 'x' }] })).status, 400, 'no system role from clients');
+  assert.equal((await chatPost({ fam: 'bad', messages: [{ role: 'user', content: 'hi' }] })).status, 400, 'family id required');
+  let cr = await chatPost({ fam: 'family-chat1', messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }] });
+  assert.equal(cr.status, 200);
+  let cj = await cr.json();
+  assert.equal(cj.stop_reason, 'end_turn');
+  assert.equal(cj.content[0].type, 'text');
+  const creq = mock.requests.at(-1);
+  assert.ok(creq.body.tools.some((t) => t.type === 'web_search_20260209'), 'web search enabled');
+  assert.match(creq.body.system[0].text, /weekend assistant/);
+  assert.equal(creq.body.output_config.effort, 'medium');
+  // Tool-result steps don't use up the daily message allowance.
+  const before = cj.remaining;
+  cr = await chatPost({ fam: 'family-chat1', messages: [
+    { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_x', name: 'clear_slot', input: { week: 'this', slot_id: 'sat@10:15' } }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_x', content: '{"ok":true}' }] },
+  ] });
+  assert.equal(cr.status, 200);
+  cr = await chatPost({ fam: 'family-chat1', messages: [{ role: 'user', content: [{ type: 'text', text: 'again' }] }] });
+  assert.equal((await cr.json()).remaining, before - 1, 'only new user messages are counted');
+  // Oversized conversations are refused with a clear message.
+  cr = await chatPost({ fam: 'family-chat1', messages: [{ role: 'user', content: 'x'.repeat(500000) }] });
+  assert.equal(cr.status, 413);
+  assert.match((await cr.json()).error, /too long/);
 
   console.log('API TESTS PASSED');
 } catch (e) {

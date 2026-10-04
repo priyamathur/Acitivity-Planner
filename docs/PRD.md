@@ -111,6 +111,7 @@ Calendars know the schedule but don't suggest anything. Idea apps suggest things
 | F11 | **Memories:** private journal with photos, a "weekends with an adventure" count and a yearly recap | ✅ |
 | F12 | **Installable PWA**, shareable activity links, backup export/import | ✅ |
 | F13 | **Plus pricing page** (interest only, no payments) | ✅ (stub) |
+| F14 | **💬 Chat: "just talk":** natural-language requests ("there's an event I'm exploring, let's do it"). Claude uses web search to look up event details, then edits the app through 8 tools (add / update / remove / skip calendar items, plan a weekend, set or clear a slot, find places). Each change shows as a receipt. Tool inputs are validated on the device, and a failed tool changes nothing. Daily message limit; tool steps are free. | ✅ |
 
 ### Not built yet (next)
 - **Calendar sync:** import classes from, and export the plan to, Google or Apple Calendar (Plus)

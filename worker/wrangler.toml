@@ -21,6 +21,8 @@ new_sqlite_classes = ["Community"]
 AI_MODEL = "claude-opus-5-5"
 # Free AI suggestions per family per day.
 AI_DAILY_LIMIT = "5"
+# Chat messages per family per day (tool steps inside a reply are not counted).
+CHAT_DAILY_LIMIT = "20"
 # A neighbourhood activity is only shown once at least this many distinct families shared it.
 MIN_FAMILIES = "3"
 # Secret (not here): ANTHROPIC_API_KEY — set with `wrangler secret put ANTHROPIC_API_KEY`.

@@ -10,6 +10,7 @@ LittleRoam plans your family's weekend in about a minute. You add the kids' clas
 - **Near me:** free playgrounds, parks, trails, libraries and more nearby (OpenStreetMap).
 - **Ideas:** 58 activities; "Add to our weekend" drops one into a free slot.
 - **Memories:** a private journal with photos, quotes and a yearly recap.
+- **💬 Chat** (needs the server): just talk. "There's a pumpkin festival this Saturday, let's go", "Leo's football moved to 5pm", "make Sunday cosy". Claude looks events up on the web and updates your app with tools: it adds, moves or skips classes and events, plans a weekend and swaps activities. Each change shows as a ✓ receipt in the chat.
 - **✨ AI planning** (needs the server): Claude fills the free windows using the bookings around them, the weather, nearby places, what's popular nearby, and an optional note ("Grandma visits Sunday lunch").
 - **👨‍👩‍👧 Popular with families near you** (needs the server): an anonymous, opt-in count of what families with kids the same age did nearby.
 
@@ -22,6 +23,7 @@ npm test             # unit tests
 npm run test:e2e     # browser tests, static (needs Playwright + Chromium)
 npm run test:api     # runs the Worker locally (wrangler dev) against a mock Claude API
 npm run test:e2e-ai  # browser tests of AI + Popular near you against the local Worker
+npm run test:e2e-chat # browser tests of the chat (tool calls, web search, limits) against the local Worker
 (cd worker && npm install && npm run dev)   # full app locally; put ANTHROPIC_API_KEY in worker/.dev.vars
 ```
 No build step. The app is plain HTML, CSS and ES modules.
@@ -58,6 +60,10 @@ One-time setup: **Settings → Pages → Build and deployment → Source: GitHub
   - places the app didn't provide are removed
   - popularity claims not backed by real data are removed
   - AI-written ideas are clamped to safe ranges and labelled "AI idea"
+
+- **Chat** sends what you type plus your family plan to Claude: kids' nicknames and ages, classes and events, and both weekends' free slots. It may search the web for events you mention. It never sends photos, memories or coordinates. The tools run on your phone, and each one is checked before it changes anything.
+
+Test coverage and results: [docs/TESTING.md](docs/TESTING.md)
 
 ## Data and attribution
 Place data © OpenStreetMap contributors (ODbL), via the Overpass API and Nominatim. Weather comes from Open-Meteo. All three are free public services with fair-use limits. Plan for caching or a paid tier before you scale.
