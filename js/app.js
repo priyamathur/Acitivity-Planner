@@ -75,7 +75,7 @@ const rerender = () => { const v = $('main').dataset.view; if (v) VIEW_RENDER[v]
 // ---------------- Activity card & detail ----------------
 function card(a, { compact = false, why = '', place = '' } = {}) {
   const fav = S().favs.includes(a.id);
-  return `<article class="card act" data-id="${a.id}">
+  return `<article class="card act" data-id="${a.id}" data-cat="${a.cat}">
     <button class="act-main" data-open="${a.id}" aria-label="Open ${esc(a.title)}">
       <span class="act-emoji" aria-hidden="true">${esc(a.emoji)}</span>
       <span class="act-text">
