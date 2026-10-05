@@ -51,16 +51,18 @@ try {
   await page.fill('.kid >> nth=1 >> input[name=kname]', 'Leo');
   await page.selectOption('.kid >> nth=1 >> select[name=kyear]', '2018');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.getByRole('heading', { name: /Hi, Mathur family/ }).waitFor();
+  await page.getByRole('link', { name: /Plan the weekend/ }).click();
   await page.getByRole('heading', { name: 'This weekend' }).waitFor();
   await page.getByText('10 Oct – 11 Oct').waitFor();
 
   // Location (for weather + places)
-  await page.locator('.explore').getByRole('link', { name: 'Places near us' }).click();
+  await page.evaluate(() => (location.hash = 'near'));
   await page.getByRole('button', { name: /Use my location/ }).click();
   await page.getByText('Pioneer Square Playground').waitFor();
   await page.getByText('Make it an adventure').waitFor();
   await page.screenshot({ path: `${SHOTS}/04-near.png`, fullPage: true });
-  await page.locator('nav.tabs').getByRole('link', { name: /Weekend/ }).click();
+  await page.evaluate(() => (location.hash = 'weekend'));
 
   async function openClassForm() {
     await page.locator('#add-class-top').click();
@@ -79,7 +81,7 @@ try {
   await addClass({ title: "Sam's birthday party", kid: 'Everyone', days: ['sat'], start: '14:00', end: '16:00', once: true });
   // Weekday class on two days: counted for the week, doesn't touch weekend time.
   await addClass({ title: 'Football', kid: 'Leo (8)', days: ['tue', 'thu'], start: '16:00', end: '17:00' });
-  await page.getByText('4 classes this week').waitFor();
+  await page.getByText(/3 classes · 1 plan this week/).waitFor();
   // Booked classes preview on the timeline before planning.
   await page.locator('#timeline-wk').getByText("Sam's birthday party").waitFor();
   // The week sheet groups by day; Tuesday is over.
@@ -107,7 +109,8 @@ try {
   await page.screenshot({ path: `${SHOTS}/02-weekend-setup.png`, fullPage: true });
 
   // Find classes nearby → venue list → "Add as a class" pre-fills the form
-  await page.locator('#find-classes-top').click();
+  await page.locator('#add-class-top').click();
+  await page.locator('#find-from-form').click();
   await page.getByRole('heading', { name: 'Find classes nearby' }).waitFor();
   await page.getByRole('button', { name: '🥋 Martial arts' }).click();
   await page.locator('.venue').first().waitFor();
@@ -120,7 +123,7 @@ try {
   await page.locator('[data-close]').click();
 
   // Plan it (no server → on-device engine)
-  await page.getByText('Big adventure').click();
+  await page.locator('.vibe', { hasText: 'Adventure' }).click();
   await page.getByRole('button', { name: /Plan our weekend/ }).click();
   await page.locator('.tl-act').first().waitFor();
   if ((await page.locator('.tl-act').count()) !== 4) fail('expected 4 planned slots');
@@ -174,7 +177,7 @@ try {
   await page.locator('#timeline-wk').getByText('Swimming').waitFor();
 
   // Ideas → add to weekend
-  await page.locator('.explore').getByRole('link', { name: 'All ideas' }).click();
+  await page.evaluate(() => (location.hash = 'ideas'));
   await page.fill('#q', 'volcano');
   await page.getByText('Kitchen volcano').click();
   await page.getByRole('button', { name: /Add to our weekend/ }).click();
@@ -182,7 +185,7 @@ try {
   await page.locator('#timeline-wk').getByText('Kitchen volcano').waitFor();
 
   // Favourites still work
-  await page.locator('.explore').getByRole('link', { name: 'All ideas' }).click();
+  await page.evaluate(() => (location.hash = 'ideas'));
   await page.fill('#q', 'volcano');
   await page.locator('[data-fav="volcano"]').first().click();
   await page.getByRole('button', { name: '♥ Saved' }).click();
@@ -204,23 +207,50 @@ try {
   await page.goto(BASE + '#a/stargaze');
   await page.getByText('Backyard star party').waitFor();
   await page.keyboard.press('Escape');
-  await page.locator('nav.tabs').getByRole('link', { name: /Weekend/ }).click();
+  await page.evaluate(() => (location.hash = 'weekend'));
   await page.locator('.tl-act').first().waitFor();
   await page.getByText("Sam's birthday party").first().waitFor();
 
-  // Just two tabs; Places, Ideas and Past weekends live under Weekend, each with a way back
-  if ((await page.locator('nav.tabs .tab').count()) !== 2) fail('expected 2 tabs');
-  for (const [link, heading] of [['Places near us', 'Places near us'], ['All ideas', 'All ideas'], ['Past weekends', 'Past weekends']]) {
-    await page.locator('nav.tabs').getByRole('link', { name: /Weekend/ }).click();
-    await page.locator('.explore').getByRole('link', { name: link }).click();
-    await page.getByRole('heading', { name: heading }).waitFor();
-    if (!(await page.locator('nav.tabs .tab[aria-current=page]').innerText()).includes('Weekend')) fail(`${link} should highlight the Weekend tab`);
-    await page.getByRole('link', { name: '‹ Weekend' }).click();
-    await page.getByRole('heading', { name: 'This weekend' }).waitFor();
-  }
+  // Home: Family | Kids sections, ask bar, classes, no bottom tabs
+  await page.goto(BASE + '#home');
+  if (await page.locator('nav.tabs').count()) fail('there should be no bottom tabs');
+  await page.getByRole('heading', { name: /Hi, Mathur family/ }).waitFor();
+  await page.getByRole('link', { name: /Plan the weekend/ }).waitFor();
+  const famTitles = await page.locator('.home-list .act-text strong').allInnerTexts();
+  if (famTitles.length !== 5) fail('expected 5 family ideas');
+  await page.getByRole('tab', { name: /Kids/ }).click();
+  await page.getByRole('heading', { name: 'Play ideas' }).waitFor();
+  const kidTitles = await page.locator('.home-list .act-text strong').allInnerTexts();
+  if (kidTitles.some((t) => famTitles.includes(t))) fail('family and kids lists should differ');
+  await page.getByRole('button', { name: 'Leo (8)' }).click();
+  const leoMeta = await page.locator('.home-list .meta').allInnerTexts();
+  for (const m of leoMeta) { const [lo, hi] = m.match(/ages (\d+)–(\d+)/).slice(1).map(Number); if (lo - 1 > 8 || hi + 1 < 8) fail(`not for an 8-year-old: ${m}`); }
+  await page.selectOption('#h-time', '30');
+  for (const m of await page.locator('.home-list .meta').allInnerTexts()) if (/\d h/.test(m)) fail(`over 30 min: ${m}`);
+  await page.getByText('Classes this week').waitFor();
+  await page.locator('.class-list').getByText('Football').waitFor();
+  await page.locator('#h-add-class').click();
+  await page.getByRole('heading', { name: 'Add a class or plan' }).waitFor();
+  await page.locator('[data-close]').click();
+  await page.getByRole('link', { name: /See all kids ideas/ }).click();
+  await page.getByRole('heading', { name: 'All ideas' }).waitFor();
+  if (!(await page.locator('[data-aud="kids"]').getAttribute('class')).includes('on')) fail('See all should open the kids filter');
+  await page.getByRole('link', { name: '‹ Home' }).click();
+  // Ask bar without AI falls back to searching ideas
+  await page.fill('#ask-q', 'volcano');
+  await page.getByRole('button', { name: 'Search' }).click();
+  await page.getByRole('heading', { name: 'All ideas' }).waitFor();
+  await page.getByText('Kitchen volcano').waitFor();
+  if ((await page.locator('#idea-list .act').count()) !== 1) fail('ask-bar search should filter ideas');
+  await page.evaluate(() => (location.hash = 'home'));
+  await page.getByRole('tab', { name: /Family/ }).click();
+  await page.getByRole('link', { name: /Parks/ }).click();
+  await page.getByRole('heading', { name: 'Places near us' }).waitFor();
+  if (!(await page.locator('[data-type="park"]').getAttribute('class')).includes('on')) fail('place chip should open that type');
+  await page.screenshot({ path: `${SHOTS}/00-home.png`, fullPage: true });
 
   // Chat without a server: explains it needs AI instead of failing
-  await page.locator('nav.tabs').getByRole('link', { name: /Chat/ }).click();
+  await page.evaluate(() => (location.hash = 'chat'));
   await page.getByText(/Chat uses AI, which is switched on/).waitFor();
   if (await page.locator('#chat-input').count()) fail('chat input shown without AI');
 

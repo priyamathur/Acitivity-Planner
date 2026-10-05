@@ -4,6 +4,7 @@ import { ACTIVITIES } from '../../js/data.js';
 import { isValidCell, isValidBand, neighbourCells } from '../../js/community.js';
 import { suggest, AIError } from './ai.js';
 import { chatStep, validMessages, isNewUserTurn } from './chat.js';
+import { handleMcp } from './mcp.js';
 
 export { Community } from './community.js';
 
@@ -34,6 +35,16 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const community = env.COMMUNITY.get(env.COMMUNITY.idFromName('global'));
+
+    // Public MCP server for AI assistants (Claude, ChatGPT, Gemini…).
+    if (url.pathname === '/mcp') {
+      if (request.method === 'POST') {
+        const ip = await sha256(request.headers.get('cf-connecting-ip') || 'local');
+        const usage = await community.consume([{ key: `m:${ip}`, limit: Number(env.MCP_DAILY_LIMIT || 1000) }]);
+        if (!usage.ok) return new Response(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: 'Daily request limit reached for this network. Try again tomorrow.' }, id: null }), { status: 429, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' } });
+      }
+      return handleMcp(request, env);
+    }
 
     try {
       if (url.pathname === '/api/health') {

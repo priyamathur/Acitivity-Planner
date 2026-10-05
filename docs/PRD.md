@@ -1,13 +1,21 @@
 # LittleRoam — Product Requirements Document
 
-**Product:** LittleRoam, the family **weekend planner**: plans around the kids' classes, fills the free time with screen-free adventures nearby, and keeps the memories
-**Version:** 2.0 (weekend focus), October 2026
+**Product:** LittleRoam, screen-free **family and kids activities**: ideas by age, places and classes nearby, weekend plans around the kids' classes, an ask-anything assistant, and an MCP server for AI assistants
+**Version:** 3.0 (family + kids activities, ask bar, MCP), October 2026
 **Owner:** Product / Founder
 **Status:** Built and tested. v2.0 refocuses the whole product on the weekend.
 
 > **How to read the numbers.** Every market figure below has a source and a confidence label. **[V]** means I checked it in a search result this session. **[U]** means it came from the brief or a secondary source and I could not confirm it against the primary source. My sandbox blocked access to Pinterest's newsroom, so check the **[U]** figures before you put them in a pitch deck.
 
 ---
+
+## 0a. Decision log v3.0: family + kids activities, ask bar, MCP
+After testing the weekend-only version, the product widens again, but with a much simpler surface:
+- **Home has two sections: 👨‍👩‍👧 Family** (do things together and go out, places, Plan the weekend) **and 🧒 Kids** (play ideas per child and age, classes, find classes nearby). Parents think in these two modes: "what can we do together" and "what can the kids do".
+- **No bottom tabs.** Everything starts from Home; other screens open from it and have a "‹ Home" back link.
+- **Chat becomes an "Ask anything" bar on Home**, not a tab. Without AI, the same bar searches the library, so it's never a dead end.
+- **MCP server:** a public, no-login MCP endpoint lets Claude, ChatGPT, Gemini and other assistants search activities, find places and class venues, get the weather and plan a day. It is a **distribution channel**: parents who already ask a chatbot "what should we do this weekend?" get LittleRoam's curated, safety-checked answers with a link back to the app. Personal tools (reading or editing *your* family's plan from a chatbot) need accounts and sign-in, so they're a later step.
+- **Kept from v2:** the weekend timeline, weekday and weekend classes, photos in Past adventures, the AI weekend plan, Popular near you.
 
 ## 0. Decision log: why only the weekend (v2.0)
 v1 tried to cover every moment: daily ideas, weekly plans, bucket lists, life skills and traditions. v2 narrows to **one job: "What are we doing this weekend?"** The reasons:

@@ -47,13 +47,15 @@ try {
   await page.getByRole('button', { name: 'Save', exact: true }).click();
 
   // Set area via Near me (also loads named places the AI can mention).
-  await page.locator('.explore').getByRole('link', { name: 'Places near us' }).click();
+  await page.evaluate(() => (location.hash = 'near'));
   await page.getByRole('button', { name: /Use my location/ }).click();
   await page.getByText('Pioneer Square Playground').waitFor();
-  await page.locator('nav.tabs').getByRole('link', { name: /Weekend/ }).click();
+  await page.evaluate(() => (location.hash = 'weekend'));
 
-  // Below threshold (1 family, needs 2): honest empty state.
+  // Below threshold (1 family, needs 2): honest empty state on Home.
+  await page.evaluate(() => (location.hash = 'home'));
   await page.getByText(/Not enough families near you have shared yet.*at least 2 families/).waitFor();
+  await page.evaluate(() => (location.hash = 'weekend'));
 
   // Add Mia's swimming class.
   await page.locator('#add-class-top').click();
@@ -97,13 +99,14 @@ try {
   await page.screenshot({ path: `${SHOTS}/11-share.png` });
   await page.getByRole('button', { name: 'Save memory' }).click();
   await page.waitForTimeout(300);
-  await page.reload();
+  await page.goto(BASE + '#home');
   await page.getByText(/Families with kids ages 4–5 near you, last 30 days/).waitFor();
   await page.locator('#popular').getByText('Nature scavenger hunt').waitFor();
   await page.locator('#popular').getByText('2 families did this').waitFor();
   await page.screenshot({ path: `${SHOTS}/12-popular.png`, fullPage: true });
 
   // AI idea and plan survive reload; memories saved.
+  await page.evaluate(() => (location.hash = 'weekend'));
   await page.locator('.day').nth(0).getByText('Dinosaur dig in a tray').waitFor();
   await page.evaluate(() => (location.hash = 'memories'));
   await page.getByText('Dinosaur dig in a tray').first().waitFor();

@@ -15,7 +15,7 @@ mkdirSync(SHOTS, { recursive: true });
 
 const mock = await startMockAnthropic(9913);
 writeFileSync('worker/.dev.vars', 'ANTHROPIC_API_KEY=test-key\nANTHROPIC_BASE_URL=http://127.0.0.1:9913\n');
-const dev = spawn('npx', ['wrangler', 'dev', '--port', String(PORT), '--ip', '127.0.0.1', '--var', 'CHAT_DAILY_LIMIT:7', '--persist-to', '/tmp/littleroam-chat-' + Date.now()], {
+const dev = spawn('npx', ['wrangler', 'dev', '--port', String(PORT), '--ip', '127.0.0.1', '--var', 'CHAT_DAILY_LIMIT:8', '--persist-to', '/tmp/littleroam-chat-' + Date.now()], {
   cwd: 'worker', env: { ...process.env, WRANGLER_SEND_METRICS: 'false' }, stdio: 'ignore', detached: true,
 });
 for (let i = 0; i < 60; i++) {
@@ -57,7 +57,7 @@ const lastBot = () => page.locator('.chat-log .bubble.bot').last().innerText();
 
 try {
   await page.goto(BASE + '#chat');
-  await page.getByRole('heading', { name: 'Chat' }).waitFor();
+  await page.getByRole('heading', { name: 'Ask LittleRoam' }).waitFor();
   await page.getByText("There's a pumpkin festival nearby this Saturday, let's go").waitFor();
   await page.getByText(/kids' nicknames, ages, classes/).waitFor();
 
@@ -82,11 +82,11 @@ try {
   if (!sentState.includes('Today: Wednesday 2026-10-07') || !sentState.includes('id foot1: Football')) fail('app state missing');
   if (sentState.includes('47.60')) fail('coordinates leaked');
 
-  await page.locator('nav.tabs').getByRole('link', { name: /Weekend/ }).click();
+  await page.evaluate(() => (location.hash = 'weekend'));
   await page.locator('.day').first().waitFor();
   const sat = await page.locator('.day').nth(0).innerText();
   if (!sat.includes('Pumpkin festival') || !sat.includes('11:00')) fail('event not on the weekend timeline');
-  await page.locator('nav.tabs').getByRole('link', { name: /Chat/ }).click();
+  await page.evaluate(() => (location.hash = 'chat'));
   await page.locator('.chat-log .bubble.me').first().waitFor();
   if ((await page.locator('.chat-log .bubble.me').count()) !== 1) fail('chat history lost when switching tabs');
 
@@ -96,15 +96,15 @@ try {
 
   // 3. Plan next weekend, then fine-tune a slot
   await send('It\'s going to rain on Sunday. Make it cosy and plan next weekend');
-  await page.getByText(/✓ Planned next weekend \(Cosy & slow\)/).waitFor();
+  await page.getByText(/✓ Planned next weekend \(Cosy\)/).waitFor();
   await page.getByText(/✓ 🏕️ Blanket fort story night at Sun/).waitFor();
-  await page.locator('nav.tabs').getByRole('link', { name: /Weekend/ }).click();
+  await page.evaluate(() => (location.hash = 'weekend'));
   await page.getByRole('tab', { name: 'Next' }).click();
   await page.locator('.day').nth(1).getByText('Blanket fort story night').waitFor();
   const titles = await page.locator('.tl-act .tl-body').allInnerTexts();
   if (new Set(titles.map((t) => t.split('\n')[0])).size !== titles.length) fail('an activity appears twice in one weekend');
   if ((await page.locator('.tl-act').count()) < 3) fail('next weekend not planned');
-  await page.locator('nav.tabs').getByRole('link', { name: /Chat/ }).click();
+  await page.evaluate(() => (location.hash = 'chat'));
   await page.locator('#chat-input').waitFor();
 
   // 4. Bad tool inputs are rejected and nothing changes
@@ -129,23 +129,32 @@ try {
   if (!JSON.parse(fp.content).places[0].website) fail('venue website not passed to Claude');
 
   // 7. Venue → "Ask chat for times" pre-fills the chat
-  await page.locator('nav.tabs').getByRole('link', { name: /Weekend/ }).click();
-  await page.locator('#find-classes-top').click();
+  await page.evaluate(() => (location.hash = 'weekend'));
+  await page.locator('#add-class-top').click();
+  await page.locator('#find-from-form').click();
   await page.locator('[data-ask-venue]').first().click();
   await page.locator('#chat-input').waitFor();
   if (!(await page.inputValue('#chat-input')).startsWith('Find swimming classes for the kids at Queen Anne Pool (https://example.org/pool)')) fail('chat not pre-filled from venue');
   await page.fill('#chat-input', '');
 
-  // 8. Daily limit (7): message 7 works, message 8 is refused politely, and the chat recovers
+  // 8. The Ask bar on Home starts a chat message
+  await page.evaluate(() => (location.hash = 'home'));
+  await page.fill('#ask-q', 'What can we do this afternoon?');
+  await page.getByRole('button', { name: 'Ask', exact: true }).click();
+  await page.getByRole('heading', { name: 'Ask LittleRoam' }).waitFor();
+  await page.locator('.chat-log .bubble.me', { hasText: 'What can we do this afternoon?' }).waitFor();
+  await page.waitForFunction(() => !document.querySelector('#chat-input')?.disabled);
+
+  // 9. Daily limit (8): message 8 works, message 9 is refused politely, and the chat recovers
   await send('hello');
   await send('hello again');
-  await page.getByText(/sent today's 7 chat messages/).waitFor();
-  // Only new messages count (6 scenarios + 1 hello = 7); the many tool steps were free.
+  await page.getByText(/sent today's 8 chat messages/).waitFor();
+  // Only new messages count (6 scenarios + ask bar + 1 hello = 8); the many tool steps were free.
 
-  // 9. New chat clears the thread but keeps the plan
+  // 10. New chat clears the thread but keeps the plan
   await page.getByRole('button', { name: 'New chat' }).click();
   if (await page.locator('.chat-log .bubble').count()) fail('new chat did not clear');
-  await page.locator('nav.tabs').getByRole('link', { name: /Weekend/ }).click();
+  await page.evaluate(() => (location.hash = 'weekend'));
   await page.getByRole('tab', { name: 'This' }).click();
   await page.locator('.day').nth(0).getByText('Pumpkin festival').waitFor();
 

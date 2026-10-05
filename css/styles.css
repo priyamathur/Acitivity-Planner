@@ -379,3 +379,49 @@ h1,h2,.day-head strong,.brand{font-family:var(--font-display);letter-spacing:-.0
 .venue > div:first-child { display: flex; flex-direction: column; }
 .btn.big + .btn.big { margin-top: 8px; }
 .classes-bar .btn.sm { flex: 1 1 0; min-height: 40px; white-space: nowrap; }
+
+/* ---- Lighter weekend header ---- */
+.classes-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 6px 6px 14px; flex-wrap: nowrap; border-width: 1px; box-shadow: none; }
+.classes-sum { flex: 1; text-align: left; background: none; border: 0; padding: 8px 0; font: inherit; color: inherit; cursor: pointer; }
+.fab { width: 40px; height: 40px; flex: none; border-radius: 50%; border: 0; background: var(--brand); color: var(--brand-ink); font-size: 1.5rem; font-weight: 700; line-height: 1; cursor: pointer; box-shadow: 0 2px 0 color-mix(in srgb, var(--brand) 70%, #000 30%); }
+.fab:active { transform: translateY(1px); box-shadow: none; }
+.plan-form .vibes { flex-wrap: nowrap; }
+.plan-form .vibe { flex: 1; }
+.plan-form .vibe span { display: block; text-align: center; padding: 8px 6px; }
+.btn.big { min-height: 48px; }
+.btn.primary { box-shadow: 0 3px 0 color-mix(in srgb, var(--brand) 72%, #000 28%); }
+.day { box-shadow: none; border: 1px solid var(--line); }
+.find-link { display: block; margin: -4px 0 8px; color: var(--brand); }
+/* Classes (weekly) and plans (one-off) are booked; activities are the suggestions */
+.tl-class .tl-body { background: var(--surface-2); border-left: 4px solid var(--accent); }
+.tl-plan .tl-body { background: color-mix(in srgb, var(--sun) 14%, var(--surface)); border-left: 4px solid var(--sun); }
+.tl-act .tl-body { padding: 6px 0; }
+
+/* ---- Home: Family | Kids ---- */
+body { padding-bottom: calc(24px + env(safe-area-inset-bottom)); }
+.home-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.home-head h1 { margin: 0; font-size: 1.6rem; }
+.ask-bar { display: flex; align-items: center; gap: 8px; background: var(--surface); border: 2px solid var(--brand); border-radius: 999px; padding: 4px 4px 4px 14px; box-shadow: 0 4px 14px color-mix(in srgb, var(--brand) 18%, transparent); }
+.ask-bar input { border: 0; background: transparent; font: inherit; color: var(--text); min-height: 40px; outline: none; min-width: 0; }
+.ask-bar input::placeholder { color: var(--muted); }
+.ask-bar .btn { box-shadow: none; min-height: 38px; }
+.home-seg { margin-top: 4px; }
+.seg.three { grid-template-columns: repeat(3, 1fr); }
+.row-btn.feature { text-decoration: none; background: linear-gradient(120deg, color-mix(in srgb, var(--sat) 35%, var(--surface)), var(--surface)); }
+.row-btn.feature b { display: block; font-size: 1.05rem; }
+.row-btn > span:first-child { display: flex; flex-direction: column; }
+.row-btn > span:first-child .meta { font-weight: 500; }
+.filters { display: flex; gap: 8px; align-items: center; }
+.filters .input { flex: 1; }
+.home-list .card + .card { margin-top: 8px; }
+.see-all { display: block; text-align: right; color: var(--brand); font-weight: 700; text-decoration: none; font-size: .92rem; }
+.chips-scroll a.chip-btn { text-decoration: none; color: var(--text); }
+.class-list { padding: 2px 14px; }
+.class-list .cls-row:last-child { border-bottom: 0; }
+.fab.sm { width: 34px; height: 34px; font-size: 1.25rem; }
+.chat-form { bottom: env(safe-area-inset-bottom); }
+.chat-fine { bottom: calc(62px + env(safe-area-inset-bottom)); }
+.chat-log { padding-bottom: 120px; }
+.back { margin-bottom: 0; }
+.home-head h1 { font-size: 1.45rem; }
+.chip.wx { white-space: nowrap; flex: none; font-size: .9rem; padding: 4px 12px; }

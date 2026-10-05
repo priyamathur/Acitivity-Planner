@@ -68,9 +68,9 @@ export function parsePlaces(json, origin, type) {
     .sort((a, b) => Number(b.named) - Number(a.named) || a.km - b.km);
 }
 
-export async function findPlaces(type, origin, radiusKm = 5, { signal } = {}) {
+export async function findPlaces(type, origin, radiusKm = 5, { signal, endpoint = OVERPASS } = {}) {
   const body = 'data=' + encodeURIComponent(buildQuery(type, origin.lat, origin.lon, Math.round(radiusKm * 1000)));
-  const res = await fetch(OVERPASS, { method: 'POST', body, headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal });
+  const res = await fetch(endpoint, { method: 'POST', body, headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal });
   if (!res.ok) throw new Error(`Place search failed (${res.status}). The free map server may be busy — try again in a minute.`);
   return parsePlaces(await res.json(), origin, type);
 }

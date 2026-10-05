@@ -1,5 +1,5 @@
 import { ACTIVITIES, CATEGORIES, SEASONS } from './data.js';
-import { currentSeason, ageFromBirthYear, weatherBucket, weatherLabel, fitsAges, VIBES, weekDays, DAY_KEYS, DAY_NAMES, classDays, bookedFor, freeWindows, fillWeekend, swapPick, classKind, toMin } from './planner.js';
+import { currentSeason, ageFromBirthYear, weatherBucket, weatherLabel, fitsAges, VIBES, audienceOf, recommend, weekDays, DAY_KEYS, DAY_NAMES, classDays, bookedFor, freeWindows, fillWeekend, swapPick, classKind, toMin } from './planner.js';
 import { PLACE_TYPES, CLASS_TYPES, findPlaces, geocode, getForecast, getPosition, directionsUrl, osmUrl } from './near.js';
 import * as store from './store.js';
 import * as api from './api.js';
@@ -32,26 +32,23 @@ function toast(msg) {
 }
 
 // ---------------- Routing ----------------
-const VIEWS = ['weekend', 'chat', 'near', 'ideas', 'memories'];
+const VIEWS = ['home', 'weekend', 'chat', 'near', 'ideas', 'memories'];
 
 function route() {
-  const hash = location.hash.slice(1) || 'weekend';
+  const hash = location.hash.slice(1) || 'home';
   if (hash.startsWith('a/')) {
     const a = byId[hash.slice(2)];
-    if (!$('main').dataset.view) show('weekend');
+    if (!$('main').dataset.view) show('home');
     if (a) openActivity(a, { fromLink: true });
     return;
   }
-  show(VIEWS.includes(hash) ? hash : 'weekend');
+  show(VIEWS.includes(hash) ? hash : 'home');
 }
 
 function show(view) {
   closeSheet();
   $('main').dataset.view = view;
-  // Near me and Ideas live under the Weekend tab.
-  const tab = ['near', 'ideas', 'memories'].includes(view) ? 'weekend' : view;
-  $$('.tab').forEach((t) => t.setAttribute('aria-current', t.dataset.view === tab ? 'page' : 'false'));
-  const render = { weekend: renderWeekend, chat: renderChat, near: renderNear, ideas: renderIdeas, memories: renderMemories }[view];
+  const render = VIEW_RENDER[view];
   render($('#view'));
   $('#view').focus({ preventScroll: true });
   window.scrollTo(0, 0);
@@ -70,9 +67,10 @@ function closeSheet() {
   if (sheet.hidden) return;
   sheet.classList.remove('open');
   sheet.hidden = true;
-  if (location.hash.startsWith('#a/')) history.replaceState(null, '', '#' + ($('main').dataset.view || 'weekend'));
+  if (location.hash.startsWith('#a/')) history.replaceState(null, '', '#' + ($('main').dataset.view || 'home'));
 }
-const rerender = () => { const v = $('main').dataset.view; if (v) ({ weekend: renderWeekend, chat: renderChat, near: renderNear, ideas: renderIdeas, memories: renderMemories })[v]($('#view')); };
+const VIEW_RENDER = { home: (r) => renderHome(r), weekend: (r) => renderWeekend(r), chat: (r) => renderChat(r), near: (r) => renderNear(r), ideas: (r) => renderIdeas(r), memories: (r) => renderMemories(r) };
+const rerender = () => { const v = $('main').dataset.view; if (v) VIEW_RENDER[v]($('#view')); };
 
 // ---------------- Activity card & detail ----------------
 function card(a, { compact = false, why = '', place = '' } = {}) {
@@ -150,6 +148,111 @@ document.addEventListener('click', (e) => {
   if (e.target.closest('[data-close]')) closeSheet();
 });
 
+// ======================= Home: Family | Kids =======================
+const home = { tab: 'family', kid: 'all', time: 'any', where: 'any', seed: 0 };
+const TIME_CHIPS = { any: 'Any time', 30: '≤ 30 min', 60: '≤ 1 hour', 180: 'Half day' };
+const WHERE_CHIPS = { family: { any: 'Anywhere', out: 'Out & about', home: 'At home' }, kids: { any: 'Anywhere', home: 'Indoors', outside: 'Outdoors' } };
+const HOME_PLACES = ['park', 'playground', 'nature', 'museum', 'library', 'animals', 'market'];
+const daySeed = () => Number(store.isoDate().replaceAll('-', ''));
+
+function homePicks() {
+  const ages = home.tab === 'kids' && home.kid !== 'all' ? [kidAges()[Number(home.kid)]].filter((a) => a != null) : kidAges();
+  const today = forecast[store.isoDate()];
+  const ctx = {
+    ages,
+    maxMins: home.time === 'any' ? 600 : Number(home.time),
+    place: home.where,
+    weather: today ? (['wet', 'snow'].includes(weatherBucket(today.code)) || today.rain >= 60 ? 'wet' : 'dry') : null,
+    recentIds: [],
+    favIds: S().favs,
+  };
+  const pool = ACTIVITIES.filter((a) => audienceOf(a) === home.tab);
+  return recommend(ctx, { count: 5, seed: daySeed() + home.seed, pool });
+}
+
+function renderHome(root) {
+  const s = S();
+  const kids = s.family.kids;
+  const { days, weekdays, plan } = weekendModel(0);
+  const today = forecast[store.isoDate()];
+  const booked = [...weekdays, ...days].flatMap((d) => d.booked.map((c) => ({ ...c, d })));
+  const upcoming = booked.filter((c) => !c.d.past);
+  const planned = plan ? Object.keys(plan.picks).length : 0;
+  const picks = homePicks();
+  const hello = s.family.name ? `Hi, ${esc(s.family.name)} family` : 'Hi there';
+  root.innerHTML = `
+    <section class="home-head">
+      <h1>${hello} 👋</h1>
+      ${today ? `<span class="chip wx">${weatherIcon(today.code)} ${Math.round(today.max)}°</span>` : ''}
+    </section>
+
+    <form id="ask" class="ask-bar" role="search">
+      <span aria-hidden="true">✨</span>
+      <input id="ask-q" class="grow" maxlength="400" autocomplete="off" placeholder="${api.chatEnabled() ? 'Ask anything…' : 'Search ideas, e.g. baking'}" aria-label="Ask LittleRoam" />
+      <button class="btn primary sm">${api.chatEnabled() ? 'Ask' : 'Search'}</button>
+    </form>
+
+    <div class="seg two home-seg" role="tablist">
+      <button role="tab" data-htab="family" class="${home.tab === 'family' ? 'on' : ''}" aria-selected="${home.tab === 'family'}">👨‍👩‍👧 Family</button>
+      <button role="tab" data-htab="kids" class="${home.tab === 'kids' ? 'on' : ''}" aria-selected="${home.tab === 'kids'}">🧒 Kids</button>
+    </div>
+
+    ${home.tab === 'family' ? `
+      <a class="card row-btn feature" href="#weekend">
+        <span>🗓️ <b>Plan the weekend</b><span class="meta">${fmtDate(days[0].date, { day: 'numeric', month: 'short' })} – ${fmtDate(days[1].date, { day: 'numeric', month: 'short' })}${planned ? ` · ${planned} planned` : ''}</span></span><span class="meta">›</span></a>
+      <h2 class="h">Things to do together</h2>`
+    : `${kids.length > 1 ? `<div class="chips-scroll">${[['all', 'All kids'], ...kids.map((k, i) => [String(i), `${k.name || `Child ${i + 1}`} (${ageFromBirthYear(k.birthYear)})`])].map(([k, l]) => `<button class="chip-btn ${home.kid === k ? 'on' : ''}" data-hkid="${k}">${esc(l)}</button>`).join('')}</div>` : ''}
+      <h2 class="h">Play ideas</h2>`}
+
+    <div class="filters">
+      <select class="input sm" id="h-time" aria-label="How long">${Object.entries(TIME_CHIPS).map(([k, l]) => `<option value="${k}" ${home.time === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <select class="input sm" id="h-where" aria-label="Where">${Object.entries(WHERE_CHIPS[home.tab]).map(([k, l]) => `<option value="${k}" ${home.where === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <button class="icon-btn" id="h-shuffle" aria-label="Show other ideas" title="Show other ideas">🔄</button>
+    </div>
+    <section class="home-list">${picks.length ? picks.map((a) => card(a, { compact: true })).join('') : '<p class="empty">Nothing fits those filters. Try “Any time”.</p>'}</section>
+    <a class="see-all" href="#ideas" id="see-all">See all ${home.tab === 'family' ? 'family' : 'kids'} ideas ›</a>
+
+    ${home.tab === 'family' ? `
+      <h2 class="h">Places near us</h2>
+      ${s.location ? `<div class="chips-scroll">${HOME_PLACES.map((k) => `<a class="chip-btn" href="#near" data-ptype="${k}">${PLACE_TYPES[k].emoji} ${PLACE_TYPES[k].label}</a>`).join('')}</div>`
+        : '<a class="card row-btn" href="#near"><span>📍 <b>Set your area</b><span class="meta">for nearby places and weather</span></span><span class="meta">›</span></a>'}
+      <section id="popular"></section>`
+    : `
+      <div class="row space center-v"><h2 class="h">Classes this week</h2><button class="fab sm" id="h-add-class" aria-label="Add a class" title="Add a class">+</button></div>
+      ${upcoming.length ? `<div class="card class-list">${upcoming.slice(0, 5).map((c) => `<button class="cls-row" data-hclass="${c.id}|${c.d.date}"><span>${esc(classKind(c.title).emoji)} ${esc(c.title)}<span class="meta">${[c.d.today ? 'Today' : c.d.name.slice(0, 3), kidName(c.kid)].filter(Boolean).map(esc).join(' · ')}</span></span><span class="meta">${esc(c.start)}</span></button>`).join('')}
+        ${upcoming.length > 5 ? `<button class="link sm" id="h-all-classes">See all ${upcoming.length} ›</button>` : ''}</div>`
+        : `<p class="meta">No classes yet. Tap + to add swimming, football, ballet…</p>`}
+      <button class="link find-link" id="h-find">🔎 Find classes nearby</button>`}
+
+    <nav class="explore" aria-label="More">
+      <a class="explore-link" href="#memories">💛 Past adventures</a>
+      <a class="explore-link" href="#ideas">💡 All ideas</a>
+    </nav>`;
+
+  $('#ask', root).onsubmit = (e) => {
+    e.preventDefault();
+    const q = $('#ask-q', root).value.trim();
+    if (!q) return;
+    if (api.chatEnabled()) { location.hash = 'chat'; setTimeout(() => sendChat(q)); }
+    else { Object.assign(ideaFilter, { q, cat: 'all', aud: 'all', setting: 'all' }); location.hash = 'ideas'; }
+  };
+  $$('[data-htab]', root).forEach((b) => (b.onclick = () => { home.tab = b.dataset.htab; home.where = 'any'; home.seed = 0; renderHome(root); }));
+  $$('[data-hkid]', root).forEach((b) => (b.onclick = () => { home.kid = b.dataset.hkid; renderHome(root); }));
+  $('#h-time', root).onchange = (e) => { home.time = e.target.value; renderHome(root); };
+  $('#h-where', root).onchange = (e) => { home.where = e.target.value; renderHome(root); };
+  $('#h-shuffle', root).onclick = () => { home.seed += 17; renderHome(root); };
+  $('#see-all', root).onclick = () => Object.assign(ideaFilter, { aud: home.tab, cat: 'all', q: '' });
+  $$('[data-ptype]', root).forEach((a) => (a.onclick = () => { nearState.type = a.dataset.ptype; nearState.places = null; }));
+  $('#h-add-class', root)?.addEventListener('click', () => classForm());
+  $('#h-find', root)?.addEventListener('click', classFinder);
+  $('#h-all-classes', root)?.addEventListener('click', classesSheet);
+  $$('[data-hclass]', root).forEach((b) => (b.onclick = () => {
+    const [id, date] = b.dataset.hclass.split('|');
+    classForm(S().classes.find((c) => c.id === id), booked.find((c) => c.id === id && c.d.date === date)?.d);
+  }));
+  if (home.tab === 'family') renderPopular();
+}
+
 // ======================= The weekend =======================
 let weekendOffset = 0; // 0 = this weekend, 1 = next
 
@@ -174,13 +277,18 @@ function renderWeekend(root) {
   const { key, days, weekdays, plan } = weekendModel();
   const live = days.filter((d) => !d.past);
   const freeCount = live.reduce((n, d) => n + d.windows.length, 0);
-  const classCount = [...weekdays, ...days].reduce((n, d) => n + d.booked.length, 0);
+  const allBooked = [...weekdays, ...days].flatMap((d) => d.booked);
+  const classCount = allBooked.length;
+  const nClasses = allBooked.filter((c) => c.repeat !== 'once').length;
+  const nPlans = classCount - nClasses;
+  const bookedSummary = [nClasses && `<b>${nClasses} class${nClasses > 1 ? 'es' : ''}</b>`, nPlans && `<b>${nPlans} plan${nPlans > 1 ? 's' : ''}</b>`].filter(Boolean).join(' · ');
   const vibe = S().lastVibe || 'mix';
   root.innerHTML = `
+    <a class="back" href="#home">‹ Home</a>
     <section class="wk-head">
       <div>
         <p class="eyebrow">${fmtDate(days[0].date, { day: 'numeric', month: 'short' })} – ${fmtDate(days[1].date, { day: 'numeric', month: 'short' })}</p>
-        <h1>${weekendOffset ? 'Next weekend' : 'This weekend'}</h1>
+          <h1>${weekendOffset ? 'Next weekend' : 'This weekend'}</h1>
       </div>
       <div class="seg mini" role="tablist">
         <button role="tab" data-wk="0" class="${weekendOffset === 0 ? 'on' : ''}" aria-selected="${weekendOffset === 0}">This</button>
@@ -188,10 +296,9 @@ function renderWeekend(root) {
       </div>
     </section>
 
-    <div class="classes-bar">
-      ${classCount ? `<button class="card row-btn" id="classes-btn"><span>🗓️ <b>${classCount} class${classCount > 1 ? 'es' : ''} this week</b></span><span class="meta">See all ›</span></button>` : ''}
-      <button class="btn sm ${classCount ? '' : 'primary'}" id="add-class-top">+ Add a class</button>
-      <button class="btn sm ghost" id="find-classes-top">🔎 Find classes</button>
+    <div class="classes-bar card">
+      <button class="classes-sum" id="classes-btn">🗓️ ${classCount ? `${bookedSummary} this week <span class="meta">›</span>` : "<span class=\"meta\">Add the kids' classes</span>"}</button>
+      <button class="fab" id="add-class-top" aria-label="Add a class" title="Add a class">+</button>
     </div>
 
     ${!plan ? `<section class="plan-form">
@@ -207,17 +314,11 @@ function renderWeekend(root) {
       <button class="btn primary" id="send-plan">↗ Send to my partner</button>
       <button class="btn ghost" id="replan">Re-plan</button></div>` : ''}
     <section id="popular"></section>
-    <nav class="explore" aria-label="Explore">
-      ${!S().location ? '<a class="row-btn card" href="#near"><span>📍 <b>Set your area</b></span><span class="meta">for weather &amp; places ›</span></a>' : ''}
-      <a class="explore-link" href="#near">📍 Places near us</a>
-      <a class="explore-link" href="#ideas">💡 All ideas</a>
-      <a class="explore-link" href="#memories">💛 Past weekends</a>
-    </nav>`;
+`;
 
   $$('[data-wk]', root).forEach((b) => (b.onclick = () => { weekendOffset = Number(b.dataset.wk); renderWeekend(root); }));
-  $('#classes-btn', root)?.addEventListener('click', classesSheet);
+  $('#classes-btn', root).onclick = () => (classCount ? classesSheet() : classForm());
   $('#add-class-top', root).onclick = () => classForm();
-  $('#find-classes-top', root).onclick = () => classFinder();
   const planBtn = $('#plan-btn', root);
   if (planBtn) planBtn.onclick = () => {
     const v = $('input[name=vibe]:checked', root)?.value || 'mix';
@@ -234,14 +335,13 @@ function renderWeekend(root) {
       openActivity(byId[plan.picks[winId].id], { slot: { key, winId, date } });
     }));
   }
-  renderPopular();
 }
 
 function dayTimeline(d, plan, { preview = false } = {}) {
   if (d.past) return '';
   const rows = [
-    ...d.booked.map((c) => ({ t: c.s, html: `<div class="tl-row tl-booked"><span class="time">${esc(c.start)}</span>
-      <span class="tl-body">${esc(classKind(c.title).emoji)} ${esc(c.title)}<span class="meta">${[kidName(c.kid), `until ${c.end}`].filter(Boolean).map(esc).join(' · ')}</span></span></div>` })),
+    ...d.booked.map((c) => ({ t: c.s, html: `<div class="tl-row tl-booked ${c.repeat === 'once' ? 'tl-plan' : 'tl-class'}"><span class="time">${esc(c.start)}</span>
+      <span class="tl-body">${esc(classKind(c.title).emoji)} ${esc(c.title)}<span class="meta">${[c.repeat === 'once' ? 'Plan' : 'Class', kidName(c.kid), `until ${c.end}`].filter(Boolean).map(esc).join(' · ')}</span></span></div>` })),
     ...(preview ? [] : d.windows.map((w) => {
       const p = plan.picks[w.id];
       const a = p && byId[p.id];
@@ -377,6 +477,7 @@ function classForm(c = null, day = null, prefill = null) {
   c ??= { title: '', kid: kids.length === 1 ? '0' : '', days: ['sat'], start: '09:00', end: '10:00', where: '', repeat: 'weekly', ...prefill };
   const chosen = classDays(c);
   openSheet(`<h2>${isNew ? 'Add a class or plan' : 'Edit'}</h2>
+    ${isNew && !prefill ? '<button type="button" class="link sm find-link" id="find-from-form">🔎 Find one nearby</button>' : ''}
     <form id="cls" class="col gap">
       <label>What is it?<input class="input" name="title" required maxlength="60" value="${esc(c.title)}" placeholder="Swimming, football, ballet, birthday party…" /></label>
       ${kids.length ? `<label>Who's going?<select class="input" name="kid"><option value="">Everyone</option>${kids.map((k, i) => `<option value="${i}" ${String(c.kid) === String(i) ? 'selected' : ''}>${esc(k.name || `Child ${i + 1}`)} (${ageFromBirthYear(k.birthYear)})</option>`).join('')}</select></label>` : ''}
@@ -394,6 +495,7 @@ function classForm(c = null, day = null, prefill = null) {
       ${!isNew ? `<div class="row gap wrap">${c.repeat !== 'once' && day ? `<button type="button" class="btn ghost" id="skip">Skip on ${fmtDate(day.date)} only</button>` : ''}<button type="button" class="btn ghost danger" id="del">Delete</button></div>` : ''}
     </form>`,
   (el) => {
+    $('#find-from-form', el)?.addEventListener('click', classFinder);
     $('#cls', el).onsubmit = (e) => {
       e.preventDefault();
       const f = new FormData(e.target);
@@ -666,13 +768,14 @@ function actionLabel(name, input, out) {
 
 function renderChat(root) {
   if (!api.chatEnabled()) {
-    root.innerHTML = `<section class="hero"><h1>Chat</h1>
+    root.innerHTML = `<a class="back" href="#home">‹ Home</a><section class="hero"><h1>Ask LittleRoam</h1>
       <p class="lede">Just tell LittleRoam what's going on ("there's a pumpkin festival on Saturday, let's go") and it updates your plan.</p></section>
       <p class="empty">Chat uses AI, which is switched on when the app runs on its server with an AI key. Everything else works without it.</p>`;
     return;
   }
   root.innerHTML = `
-    <section class="chat-head"><h1>Chat</h1>${chat.log.length ? '<button class="btn sm ghost" id="chat-new">New chat</button>' : ''}</section>
+    <a class="back" href="#home">‹ Home</a>
+    <section class="chat-head"><h1>Ask LittleRoam</h1>${chat.log.length ? '<button class="btn sm ghost" id="chat-new">New chat</button>' : ''}</section>
     <section class="chat-log" id="chat-log" aria-live="polite">
       ${chat.log.length ? '' : `<p class="meta">Tell me what's going on and I'll update your plan. I can add events and classes, look events up online, move things around and plan a weekend.</p>
         <div class="chat-suggest">${CHAT_SUGGESTIONS.map((t) => `<button class="chip-btn" data-suggest="${esc(t)}">${esc(t)}</button>`).join('')}</div>`}
@@ -782,7 +885,7 @@ let nearState = { type: 'playground', radius: 5, places: null, error: null, load
 function renderNear(root) {
   const loc = S().location;
   root.innerHTML = `
-    <a class="back" href="#weekend">‹ Weekend</a>
+    <a class="back" href="#home">‹ Home</a>
     <section class="hero"><h1>Places near us</h1>
       <p class="lede">Free, mostly outdoor places from open map data — no ads, no sponsored rankings.</p></section>
     <section class="card pad">
@@ -861,13 +964,14 @@ async function renderPlaces() {
 }
 
 // ---------------- Ideas library ----------------
-let ideaFilter = { cat: 'all', setting: 'all', q: '', forKids: true };
+let ideaFilter = { cat: 'all', setting: 'all', q: '', forKids: true, aud: 'all' };
 
 function renderIdeas(root) {
   const ages = kidAges();
   root.innerHTML = `
-    <a class="back" href="#weekend">‹ Weekend</a>
-    <section class="hero"><h1>All ideas</h1><p class="lede">${ACTIVITIES.length} screen-free ideas for the weekend.</p></section>
+    <a class="back" href="#home">‹ Home</a>
+    <section class="hero"><h1>All ideas</h1><p class="lede">${ACTIVITIES.length} screen-free family and kids activities.</p></section>
+    <div class="seg three" role="tablist">${[['all', 'All'], ['family', '👨‍👩‍👧 Family'], ['kids', '🧒 Kids']].map(([k, l]) => `<button role="tab" data-aud="${k}" class="${ideaFilter.aud === k ? 'on' : ''}" aria-selected="${ideaFilter.aud === k}">${l}</button>`).join('')}</div>
     <input class="input" id="q" type="search" placeholder="Search: slime, baking, rainy…" value="${esc(ideaFilter.q)}" aria-label="Search ideas" />
     <div class="chips-scroll">${[['all', '✨ All'], ...Object.entries(CATEGORIES).map(([k, c]) => [k, `${c.emoji} ${c.label}`]), ['favs', '♥ Saved']].map(([k, l]) => `<button class="chip-btn ${ideaFilter.cat === k ? 'on' : ''}" data-cat="${k}">${l}</button>`).join('')}</div>
     <div class="row gap wrap center-v">
@@ -878,6 +982,7 @@ function renderIdeas(root) {
   const draw = () => {
     const q = ideaFilter.q.toLowerCase();
     const list = ACTIVITIES.filter((a) =>
+      (ideaFilter.aud === 'all' || audienceOf(a) === ideaFilter.aud) &&
       (ideaFilter.cat === 'all' || (ideaFilter.cat === 'favs' ? S().favs.includes(a.id) : a.cat === ideaFilter.cat)) &&
       (ideaFilter.setting === 'all' || a.setting === ideaFilter.setting) &&
       (!ages.length || !ideaFilter.forKids || fitsAges(a, ages)) &&
@@ -886,6 +991,7 @@ function renderIdeas(root) {
   };
   $('#q', root).oninput = (e) => { ideaFilter.q = e.target.value; draw(); };
   $$('[data-cat]', root).forEach((b) => (b.onclick = () => { ideaFilter.cat = b.dataset.cat; renderIdeas(root); }));
+  $$('[data-aud]', root).forEach((b) => (b.onclick = () => { ideaFilter.aud = b.dataset.aud; renderIdeas(root); }));
   $('#setting', root).onchange = (e) => { ideaFilter.setting = e.target.value; draw(); };
   const fk = $('#forkids', root);
   if (fk) fk.onchange = (e) => { ideaFilter.forKids = e.target.checked; draw(); };
@@ -950,8 +1056,8 @@ function renderMemories(root) {
   const weekendsOut = new Set(thisYear.filter((m) => [0, 6].includes(new Date(m.date + 'T12:00').getDay())).map((m) => { const d = new Date(m.date + 'T12:00'); d.setDate(d.getDate() - ((d.getDay() + 1) % 7)); return store.isoDate(d); })).size;
   const outdoors = thisYear.filter((m) => m.activityId && byId[m.activityId]?.setting !== 'home').length;
   root.innerHTML = `
-    <a class="back" href="#weekend">‹ Weekend</a>
-    <section class="hero"><h1>Past weekends</h1><p class="lede">Private to your family. No likes, no followers, no comparing.</p></section>
+    <a class="back" href="#home">‹ Home</a>
+    <section class="hero"><h1>Past adventures</h1><p class="lede">Private to your family. No likes, no followers, no comparing.</p></section>
     <div class="grid three stats">
       <div class="stat"><strong>${weekendsOut}</strong><span>${weekendsOut === 1 ? 'weekend' : 'weekends'} with an adventure</span></div>
       <div class="stat"><strong>${thisYear.length}</strong><span>in ${year}</span></div>
@@ -1094,7 +1200,7 @@ async function loadForecast() {
   if (!loc) return;
   try {
     forecast = await getForecast(loc);
-    if ($('main').dataset.view === 'weekend' && $('#sheet').hidden) renderWeekend($('#view'));
+    if (['home', 'weekend'].includes($('main').dataset.view) && $('#sheet').hidden) rerender();
   } catch { forecast = {}; }
 }
 
@@ -1108,7 +1214,7 @@ loadForecast();
 // Turn on AI and Popular-near-you once we know the server supports them.
 api.checkHealth().then(() => {
   const v = $('main').dataset.view;
-  if ((api.aiEnabled() || api.communityEnabled()) && ['weekend', 'chat'].includes(v) && $('#sheet').hidden) rerender();
+  if ((api.aiEnabled() || api.communityEnabled()) && ['home', 'weekend', 'chat'].includes(v) && $('#sheet').hidden) rerender();
 });
 if (!S().onboarded && !location.hash.startsWith('#a/')) onboarding();
 

@@ -1,7 +1,7 @@
 # LittleRoam: test report
 
 **Last run:** 7 Oct 2026 (the browser tests pin the date to Wednesday 7 Oct 2026, so this weekend is 10–11 Oct)
-**Result:** ✅ all suites pass: 20 unit tests, 4 end-to-end suites. CI runs every suite on every PR and on every push to `main`.
+**Result:** ✅ all suites pass: 20 unit tests, 5 end-to-end suites. CI runs every suite on every PR and on every push to `main`.
 
 | Suite | Command | What it runs | Result |
 |---|---|---|---|
@@ -9,11 +9,29 @@
 | API | `npm run test:api` | The real server (Cloudflare Worker via `wrangler dev`) with a mock Claude API | ✅ |
 | Browser, no server | `npm run test:e2e` | Full app in Chromium, as hosted on GitHub Pages (no AI) | ✅ |
 | Browser, AI planning | `npm run test:e2e-ai` | App + server + mock Claude: AI weekend plan, Popular near you | ✅ |
-| Browser, chat | `npm run test:e2e-chat` | App + server + scripted mock Claude: the chat loop editing the app | ✅ |
+| Browser, chat | `npm run test:e2e-chat` | App + server + scripted mock Claude: the chat loop editing the app, started from the Home ask bar | ✅ |
+| MCP | `npm run test:mcp` | The official MCP client connects to the Worker's `/mcp` and calls all 5 tools (map, geocoding and weather use local fixtures) | ✅ |
 
 > **What is mocked.** My build environment can't reach the internet, so these services are replaced with fakes that return realistic data: OpenStreetMap places, Open-Meteo weather and the **Claude API**. Every message *we send* to Claude is checked (model, tools, safety settings, privacy). Claude's *answers* in these tests are scripted. **Run the "Live checks" list at the end once the app is deployed with a real key.**
 
 ## Use cases covered
+
+### Home (Family | Kids)
+- [x] No bottom tabs; greeting, today's weather, Ask bar, Family/Kids switch
+- [x] Family shows 5 together/outing ideas and Plan the weekend; Kids shows 5 different play ideas
+- [x] Per-child filter (e.g. Leo, 8): every idea suits that age; time filter (≤ 30 min) respected
+- [x] Kids: this week's classes, a small + to add a class, Find classes nearby
+- [x] "See all kids ideas" opens All ideas with the Kids filter on; place chips open Places with that type selected
+- [x] Ask bar without AI searches the library ("volcano" → Kitchen volcano); with AI it opens Ask LittleRoam and sends the message
+
+### MCP server
+- [x] An MCP client connects (`initialize`) and lists 5 tools, each with a description, input schema and `readOnlyHint`
+- [x] Search: kids-only, ≤ 30 min, rain-friendly; family + outings; keyword; no results → a helpful error; age 99 rejected by the schema
+- [x] Get activity: full steps and materials; unknown id → points to the search tool
+- [x] Find places by place name (geocoded, sends an identifying User-Agent as Nominatim requires) and by coordinates; class venues (swimming pools); missing or unknown location → a clear error
+- [x] Weather for a date (rain chance, "wet")
+- [x] Plan a day around swimming 9–10 and a party 2–4 on a rainy day: the right free slots, rain-friendly activities that fit their slots, no repeats; no free time → error; bad date → rejected
+- [x] CORS preflight for browser-based clients
 
 ### Weekend planning (no AI needed)
 - [x] Onboarding: add two children with nicknames and birth years
@@ -71,6 +89,7 @@
 5. Chat: the same activity could be planned twice in one weekend
 
 ## Live checks to run after deploying (needs the real Claude key)
+0. MCP: add `https://<worker>/mcp` to Claude, ChatGPT or Gemini, then ask "find a rainy-day activity for a 4-year-old and a swimming pool near Seattle".
 1. Chat: "There's a pumpkin festival near [your city] this Saturday, let's go". Check that the date and times match the event's website.
 2. Chat: "Mia's swimming moved to 10am" and "Skip football on Thursday". Check the Weekend tab.
 3. Chat: something vague like "add a party". It should ask which day and time instead of guessing.

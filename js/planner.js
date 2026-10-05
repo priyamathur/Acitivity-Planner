@@ -108,9 +108,9 @@ export function haversineKm(a, b) {
 // ======================= Weekend planning =======================
 
 export const VIBES = {
-  adventure: { label: 'Big adventure', emoji: '🗺️', desc: 'Get out and explore' },
-  mix: { label: 'A bit of both', emoji: '⚖️', desc: 'One outing, one cosy time' },
-  cosy: { label: 'Cosy & slow', emoji: '🛋️', desc: 'Mostly home and close by' },
+  adventure: { label: 'Adventure', emoji: '🗺️', desc: 'Get out and explore' },
+  mix: { label: 'Mix', emoji: '⚖️', desc: 'One outing, one cosy time' },
+  cosy: { label: 'Cosy', emoji: '🛋️', desc: 'Mostly home and close by' },
 };
 
 export const DAY = { start: 9 * 60, end: 18 * 60, lunch: [12 * 60 + 30, 13 * 60 + 30] };
@@ -226,4 +226,10 @@ const CLASS_KINDS = [
 export function classKind(title) {
   const k = CLASS_KINDS.find(([re]) => re.test(title));
   return k ? { emoji: k[1], kind: k[2] } : { emoji: '📌', kind: 'Booked' };
+}
+
+// Who an activity is mainly for: something the family does together (outings,
+// connection, nature), or kids' own play (sensory, art, STEM, movement, life skills).
+export function audienceOf(a) {
+  return a.setting === 'out' || a.cat === 'together' || a.cat === 'nature' ? 'family' : 'kids';
 }
