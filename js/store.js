@@ -16,6 +16,7 @@ const DEFAULT = {
   fam: null, // random device id, used only for anonymous counting and AI daily limits
   custom: {}, // AI-created activities, keyed by id
   shareNearby: false, // remembered choice for the anonymous share checkbox
+  schools: [], // linked school calendars: { id, kid, name, source: 'feed'|'file'|'photo', url?, events: [{ date, end, title, kind, start?, finish? }], updated }
 };
 
 let state = load();

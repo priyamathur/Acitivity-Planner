@@ -1,9 +1,9 @@
 // App-shell cache: the planner, ideas, plans and memories work fully offline.
 // Bump VERSION whenever app files change.
-const VERSION = 'littleroam-v5';
+const VERSION = 'littleroam-v6';
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './css/styles.css',
-  './js/app.js', './js/data.js', './js/planner.js', './js/near.js', './js/store.js', './js/api.js', './js/community.js',
+  './js/app.js', './js/data.js', './js/planner.js', './js/near.js', './js/store.js', './js/api.js', './js/community.js', './js/school.js',
   './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png',
 ];
 

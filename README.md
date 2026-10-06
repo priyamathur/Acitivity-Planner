@@ -45,6 +45,12 @@ Settings live in `worker/wrangler.toml`:
 ### B. Static app without AI: GitHub Pages
 One-time setup: **Settings → Pages → Build and deployment → Source: GitHub Actions**. The site goes live at `https://<user>.github.io/<repo>/`. The AI and community features switch themselves off when no server is present.
 
+## School calendars
+Profile → a child → **Link school**. LittleRoam reads only dates (days off, early release, events), never grades, messages or logins.
+- **Paste a calendar link** (`https://…` or `webcal://…`, usually from a “Subscribe” / “iCal” button). With the Worker deployed, `/api/school-feed` fetches it (school sites usually block browsers from reading feeds directly) and the app refreshes it daily. It only fetches public hostnames and only passes back real calendar files. Limit: `SCHOOL_FEED_DAILY_LIMIT` per network (default 60).
+- **Import a .ics file.** Works on GitHub Pages too.
+- **Snap the newsletter.** `/api/school-photo` sends the photo to Claude, which lists the dates; the parent checks them before saving. Shares the `AI_DAILY_LIMIT`.
+
 ## MCP server (for Claude, ChatGPT, Gemini and other AI assistants)
 The Worker also serves a **public, no-login MCP server** at `https://<your-worker>/mcp`. It uses Streamable HTTP and is stateless, so it stores nothing. It has 5 read-only tools:
 

@@ -43,6 +43,10 @@ await page.addInitScript(() => {
       { id: 'swim1', title: 'Swimming', kid: '0', days: ['sat'], start: '09:00', end: '10:00', where: '', repeat: 'weekly' },
       { id: 'foot1', title: 'Football', kid: '1', days: ['tue', 'thu'], start: '16:00', end: '17:00', where: '', repeat: 'weekly' },
     ],
+    schools: [{ id: 'sch1', kid: '1', name: 'Grand Ridge Elementary', source: 'file', updated: Date.now(), events: [
+      { date: '2026-10-09', end: '2026-10-09', title: 'No School - Professional Learning Day', kind: 'off' },
+      { date: '2026-10-13', end: '2026-10-13', title: 'Picture Day', kind: 'event' },
+    ] }],
   }));
 });
 
@@ -81,6 +85,8 @@ try {
   const sentState = JSON.stringify(first.body.messages[0]);
   if (!sentState.includes('Today: Wednesday 2026-10-07') || !sentState.includes('id foot1: Football')) fail('app state missing');
   if (sentState.includes('47.60')) fail('coordinates leaked');
+  if (!sentState.includes('2026-10-09: No School - Professional Learning Day (Grand Ridge Elementary, Leo)')) fail('school day off missing from app state');
+  if (sentState.includes('Picture Day')) fail('only days off and early release are sent to chat');
 
   await page.evaluate(() => (location.hash = 'weekend'));
   await page.locator('.day').first().waitFor();

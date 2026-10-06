@@ -27,7 +27,8 @@ await page.addInitScript(() => { delete Navigator.prototype.share; });
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 // The app probes /api/health to see if a server is present; a 404 there is expected on static hosting.
-page.on('console', (m) => m.type() === 'error' && !(m.location()?.url || '').includes('/api/health') && errors.push(m.text()));
+// blocked.example is a calendar link the test blocks on purpose.
+page.on('console', (m) => m.type() === 'error' && !/\/api\/health|blocked\.example/.test(m.location()?.url || '') && errors.push(m.text()));
 
 const overpassQueries = [];
 await page.route('https://overpass-api.de/**', (r) => (overpassQueries.push(r.request().postData()), r.fulfill({ json: { elements: [
@@ -213,7 +214,9 @@ try {
 
   // Home: Family | Kids sections, ask bar, classes, no bottom tabs
   await page.goto(BASE + '#home');
-  if (await page.locator('nav.tabs').count()) fail('there should be no bottom tabs');
+  // Three bottom tabs: Plan · Discover · Profile.
+  if ((await page.locator('nav.tabbar .tab').allInnerTexts()).map((t) => t.trim()).join('|') !== 'Plan|Discover|Profile') fail('expected tabs Plan, Discover, Profile');
+  if ((await page.locator('.tab[aria-current=page]').innerText()).trim() !== 'Plan') fail('Plan tab should be current on Home');
   await page.getByRole('heading', { name: /Hi, Mathur family/ }).waitFor();
   await page.getByRole('link', { name: /Plan the weekend/ }).waitFor();
   const famTitles = await page.locator('.home-list .act-text strong').allInnerTexts();
@@ -254,9 +257,149 @@ try {
   await page.getByText(/Chat uses AI, which is switched on/).waitFor();
   if (await page.locator('#chat-input').count()) fail('chat input shown without AI');
 
-  // Plus sheet
-  await page.locator('#settings-btn').click();
-  await page.getByRole('button', { name: /About LittleRoam Plus/ }).click();
+  // Chat is a full screen: no tab bar under its message box.
+  if (await page.locator('nav.tabbar').isVisible()) fail('tab bar should be hidden in chat');
+
+  // ---------- Tabs: each screen highlights the right tab ----------
+  for (const [hash, tab] of [['home', 'Plan'], ['weekend', 'Plan'], ['ideas', 'Plan'], ['near', 'Plan'], ['discover', 'Discover'], ['profile', 'Profile'], ['memories', 'Profile']]) {
+    await page.evaluate((h) => (location.hash = h), hash);
+    await page.waitForFunction((h) => document.body.dataset.view === h, hash);
+    if ((await page.locator('.tab[aria-current=page]').innerText()).trim() !== tab) fail(`#${hash} should highlight ${tab}`);
+  }
+  await page.locator('.tabbar').getByRole('link', { name: 'Discover' }).click();
+  await page.getByRole('heading', { name: 'Discover', exact: true }).waitFor();
+
+  // ---------- Discover feed ----------
+  const lib = async (ids) => page.evaluate(async (ids) => { const { ACTIVITIES } = await import('./js/data.js'); return ids.map((id) => ACTIVITIES.find((a) => a.id === id)); }, ids);
+  const pinIds = async () => page.locator('.pin').evaluateAll((els) => els.map((e) => e.dataset.id));
+  await page.getByText('Picked for Mia (5) and Leo (8)').waitFor();
+  let ids = await pinIds();
+  if (ids.length < 8) fail(`feed too short: ${ids.length}`);
+  if (new Set(ids).size !== ids.length) fail('feed repeats an idea');
+  for (const a of await lib(ids)) if (a.ages[1] < 5 || a.ages[0] > 8) fail(`feed idea not for ages 5–8: ${a.id}`);
+  await page.getByRole('tab', { name: 'Rainy day' }).click();
+  for (const a of await lib(await pinIds())) if (a.weather === 'dry' || a.setting === 'outside') fail(`rainy-day feed has a dry-weather idea: ${a.id}`);
+  await page.getByRole('tab', { name: 'This weekend' }).click();
+  for (const a of await lib(await pinIds())) if (a.setting === 'home') fail(`weekend feed should be out and about: ${a.id}`);
+  await page.getByRole('tab', { name: 'Free days' }).click();
+  await page.getByText(/Link the kids' school calendars in Profile/).waitFor();
+  await page.getByRole('tab', { name: 'For you' }).click();
+  ids = await pinIds();
+  await page.getByRole('button', { name: 'Show me different ideas' }).click();
+  if ((await pinIds()).join() === ids.join()) fail('"Show me different ideas" should change the feed');
+  // Save from the feed → shows up in saved ideas; tap a pin → its details.
+  const savedId = (await pinIds())[0];
+  await page.locator(`.pin[data-id="${savedId}"] .pin-fav`).click();
+  if ((await page.locator(`.pin[data-id="${savedId}"] .pin-fav`).getAttribute('aria-pressed')) !== 'true') fail('heart did not toggle');
+  await page.locator(`.pin[data-id="${savedId}"] .pin-main`).click();
+  await page.locator('#sheet-body').getByRole('heading', { level: 2 }).waitFor();
+  await page.keyboard.press('Escape');
+  await page.screenshot({ path: `${SHOTS}/10-discover.png`, fullPage: true });
+
+  // ---------- Profile ----------
+  await page.locator('.tabbar').getByRole('link', { name: 'Profile' }).click();
+  await page.getByRole('heading', { name: 'Mathur family' }).waitFor();
+  await page.locator('.kid-row', { hasText: 'Mia · 5' }).getByText('No school linked').waitFor();
+  await page.locator('.kid-row', { hasText: 'Leo · 8' }).waitFor();
+  // Share toggle is remembered.
+  await page.locator('#share-toggle').check();
+  if (!(await page.evaluate(() => window.__littleroam.store.get().shareNearby))) fail('share toggle not saved');
+  await page.locator('#share-toggle').uncheck();
+  // MCP sheet on static hosting explains it needs the server.
+  await page.getByRole('button', { name: /Use in Claude or ChatGPT/ }).click();
+  await page.getByText(/MCP server runs with the full LittleRoam server/).waitFor();
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: /Backup & your data/ }).click();
+  await page.getByRole('button', { name: /Export backup/ }).waitFor();
+  await page.keyboard.press('Escape');
+
+  // ---------- Link a school: Grand Ridge (calendar link) for Leo ----------
+  const GR_ICS = ['BEGIN:VCALENDAR', 'VERSION:2.0',
+    'BEGIN:VEVENT', 'DTSTART;VALUE=DATE:20261009', 'DTEND;VALUE=DATE:20261010', 'SUMMARY:No School - Professional Learning Day', 'END:VEVENT',
+    'BEGIN:VEVENT', 'DTSTART:20261014T133000', 'DTEND:20261014T150000', 'SUMMARY:Early Release', 'END:VEVENT',
+    'BEGIN:VEVENT', 'DTSTART;VALUE=DATE:20261013', 'SUMMARY:Picture Day', 'END:VEVENT',
+    'BEGIN:VEVENT', 'DTSTART;VALUE=DATE:20261111', 'SUMMARY:Veterans Day - No School', 'END:VEVENT',
+    'END:VCALENDAR'].join('\r\n');
+  await page.route('https://calendar.grandridge.example/**', (r) => r.fulfill({ contentType: 'text/calendar', headers: { 'access-control-allow-origin': '*' }, body: GR_ICS }));
+  await page.route('https://school.example/page', (r) => r.fulfill({ contentType: 'text/html', headers: { 'access-control-allow-origin': '*' }, body: '<html>Calendar</html>' }));
+  await page.route('https://blocked.example/**', (r) => r.abort());
+  await page.locator('.kid-row', { hasText: 'Leo · 8' }).getByRole('button', { name: 'Link school' }).click();
+  await page.getByRole('heading', { name: "Link Leo's school" }).waitFor();
+  // Photo reading needs AI: explained, not offered.
+  await page.getByText(/Reading photos uses AI/).waitFor();
+  if (await page.locator('#photo-file').count()) fail('photo option shown without AI');
+  await page.fill('[name=url]', 'https://calendar.grandridge.example/feed.ics');
+  await page.getByRole('button', { name: 'Link', exact: true }).click();
+  await page.getByText('Add the school name first.').waitFor();
+  await page.fill('[name=school]', 'Grand Ridge Elementary');
+  await page.fill('[name=url]', 'not a link');
+  await page.getByRole('button', { name: 'Link', exact: true }).click();
+  await page.getByText(/starts with https:\/\/ or webcal/).waitFor();
+  await page.fill('[name=url]', 'https://school.example/page');
+  await page.getByRole('button', { name: 'Link', exact: true }).click();
+  await page.getByText(/isn't a calendar file/).waitFor();
+  await page.fill('[name=url]', 'https://blocked.example/feed.ics');
+  await page.getByRole('button', { name: 'Link', exact: true }).click();
+  await page.getByText(/can't be read from the browser/).waitFor();
+  await page.fill('[name=url]', 'webcal://calendar.grandridge.example/feed.ics');
+  await page.getByRole('button', { name: 'Link', exact: true }).click();
+  await page.getByRole('heading', { name: 'Grand Ridge Elementary' }).waitFor();
+  await page.getByText(/4 upcoming dates/).first().waitFor();
+  const coming = await page.locator('#sheet-body .cls-row').allInnerTexts();
+  if (!coming[0].includes('No School - Professional Learning Day') || !coming[0].includes('No school')) fail('first coming-up date should be the day off: ' + coming[0]);
+  if (!coming.some((t) => t.includes('Early release'))) fail('early release not recognised');
+  if ((await page.evaluate(() => window.__littleroam.store.get().schools[0].url)) !== 'https://calendar.grandridge.example/feed.ics') fail('webcal link should be stored as https');
+  await page.keyboard.press('Escape');
+  await page.locator('.kid-row', { hasText: 'Leo · 8' }).getByText(/Calendar linked/).waitFor();
+  await page.screenshot({ path: `${SHOTS}/11-profile.png`, fullPage: true });
+
+  // ---------- Synergy Learning Academy (calendar file) for Mia ----------
+  await page.locator('.kid-row', { hasText: 'Mia · 5' }).getByRole('button', { name: 'Link school' }).click();
+  await page.fill('[name=school]', 'Synergy Learning Academy');
+  await page.setInputFiles('#ics-file', { name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('hello') });
+  await page.getByText(/isn't a calendar file/).waitFor();
+  const SLA_ICS = 'BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART;VALUE=DATE:20261023\r\nSUMMARY:School Closed - Staff Training\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nDTSTART:20261030T100000\r\nDTEND:20261030T113000\r\nSUMMARY:Pumpkin patch field trip\r\nEND:VEVENT\r\nEND:VCALENDAR';
+  await page.setInputFiles('#ics-file', { name: 'synergy.ics', mimeType: 'text/calendar', buffer: Buffer.from(SLA_ICS) });
+  await page.getByRole('heading', { name: 'Synergy Learning Academy' }).waitFor();
+  await page.getByText(/Calendar file imported/).first().waitFor();
+  if (await page.locator('#sc-refresh').count()) fail('an imported file cannot be refreshed');
+  await page.keyboard.press('Escape');
+
+  // ---------- School dates show up across the app ----------
+  await page.locator('.tabbar').getByRole('link', { name: 'Plan' }).click();
+  await page.getByText(/No school Fri,? 9 Oct for Leo · Grand Ridge Elementary/).waitFor();
+  await page.getByRole('tab', { name: /Kids/ }).click();
+  await page.getByRole('heading', { name: 'School this week' }).waitFor();
+  const wkSchool = await page.locator('.school-list').innerText();
+  for (const t of ['No School - Professional Learning Day', 'Grand Ridge Elementary · Leo']) if (!wkSchool.includes(t)) fail(`School this week missing ${t}`);
+  if (wkSchool.includes('Early Release')) fail('next week\'s early release should not be in this week');
+  await page.locator('#day-off').click();
+  await page.getByRole('heading', { name: 'Discover', exact: true }).waitFor();
+  if ((await page.getByRole('tab', { name: 'Free days' }).getAttribute('aria-selected')) !== 'true') fail('day-off notice should open Free days');
+  const freeList = await page.locator('#view .class-list').innerText();
+  for (const t of ['No School - Professional Learning Day', 'School Closed - Staff Training', 'Veterans Day - No School']) if (!freeList.includes(t)) fail(`Free days missing ${t}`);
+  if (freeList.includes('Picture Day') || freeList.includes('field trip')) fail('ordinary school events are not days off');
+  for (const a of await lib(await pinIds())) if (a.mins < 60) fail(`free-day ideas should be bigger: ${a.id}`);
+
+  // Unlink, and editing the family keeps schools with the right child.
+  await page.locator('.tabbar').getByRole('link', { name: 'Profile' }).click();
+  await page.getByRole('button', { name: 'Edit' }).click();
+  await page.locator('.kid', { has: page.locator('input[value=Mia]') }).getByRole('button', { name: 'Remove child' }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.locator('.kid-row', { hasText: 'Leo · 8' }).getByText('Grand Ridge Elementary').waitFor();
+  const after = await page.evaluate(() => window.__littleroam.store.get());
+  if (after.schools.length !== 1 || after.schools[0].kid !== '0' || after.schools[0].name !== 'Grand Ridge Elementary') fail('school should follow Leo: ' + JSON.stringify(after.schools));
+  if (after.classes.find((c) => c.title === 'Football').kid !== '0') fail("Leo's class should follow Leo");
+  if (after.classes.find((c) => c.title === 'Swimming').kid !== '') fail("Mia's class should become everyone's when Mia is removed");
+  await page.locator('.kid-row').getByRole('button', { name: 'Manage' }).click();
+  await page.getByRole('button', { name: /Unlink Grand Ridge/ }).click();
+  await page.locator('.kid-row').getByText('No school linked').waitFor();
+  await page.goto(BASE + '#home');
+  if (await page.locator('#day-off').count()) fail('day-off notice should go once unlinked');
+
+  // Plus
+  await page.evaluate(() => (location.hash = 'profile'));
+  await page.locator('#plus-btn').click();
   await page.getByText('$4.99').waitFor();
   await page.screenshot({ path: `${SHOTS}/08-plus.png` });
 
@@ -269,8 +412,16 @@ try {
   await dark.waitForTimeout(400); // let the onboarding sheet finish animating
   await dark.screenshot({ path: `${SHOTS}/09-desktop-dark.png` });
 
-  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
-  if (overflow) fail('horizontal overflow on mobile');
+  for (const h of ['home', 'discover', 'profile', 'weekend', 'ideas', 'memories']) {
+    await page.evaluate((x) => (location.hash = x), h);
+    await page.waitForFunction((x) => document.body.dataset.view === x, h);
+    if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)) fail(`horizontal overflow on mobile: #${h}`);
+  }
+  for (const h of ['discover', 'profile']) {
+    await dark.goto(BASE + '#' + h);
+    await dark.waitForTimeout(300);
+    await dark.screenshot({ path: `${SHOTS}/12-dark-${h}.png` });
+  }
   if (errors.length) fail('console errors:\n' + errors.join('\n'));
   console.log('E2E PASSED');
 } catch (e) {

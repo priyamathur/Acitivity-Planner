@@ -1,11 +1,11 @@
 # LittleRoam: test report
 
 **Last run:** 7 Oct 2026 (the browser tests pin the date to Wednesday 7 Oct 2026, so this weekend is 10–11 Oct)
-**Result:** ✅ all suites pass: 20 unit tests, 5 end-to-end suites. CI runs every suite on every PR and on every push to `main`.
+**Result:** ✅ all suites pass: 26 unit tests, 5 end-to-end suites. CI runs every suite on every PR and on every push to `main`.
 
 | Suite | Command | What it runs | Result |
 |---|---|---|---|
-| Unit | `npm test` | Planning engine, privacy helpers, AI output validation (Node) | ✅ 20 / 20 |
+| Unit | `npm test` | Planning engine, privacy helpers, AI output validation, school calendar parsing (Node) | ✅ 26 / 26 |
 | API | `npm run test:api` | The real server (Cloudflare Worker via `wrangler dev`) with a mock Claude API | ✅ |
 | Browser, no server | `npm run test:e2e` | Full app in Chromium, as hosted on GitHub Pages (no AI) | ✅ |
 | Browser, AI planning | `npm run test:e2e-ai` | App + server + mock Claude: AI weekend plan, Popular near you | ✅ |
@@ -16,8 +16,26 @@
 
 ## Use cases covered
 
+### Tabs, Discover, Profile (v3.1)
+- [x] Three tabs (Plan · Discover · Profile); every screen highlights the right one (Weekend, Ideas and Places → Plan; Past adventures → Profile); chat hides the tab bar
+- [x] Discover: 8+ ideas, no repeats, all suit the kids' ages (5 and 8); *Rainy day* has no dry-weather or outdoor-only ideas; *This weekend* has no at-home ideas; *Free days* lists school days off and bigger ideas (1 h+); "Show me different ideas" changes the feed; hearts save; tapping opens details
+- [x] With the server: real "N families near you did this" picks lead the feed and aren't repeated
+- [x] Profile: family, kids, share toggle saved, MCP address (or an explanation on static hosting), backup, Plus
+- [x] No sideways scrolling on Home, Discover, Profile, Weekend, Ideas, Past adventures; dark mode screenshots
+
+### School calendars
+- [x] Grand Ridge Elementary via calendar link: missing school name, not-a-link, a web page instead of a calendar, a site that blocks browsers (→ suggests importing the file), then a `webcal://` link that works (stored as https)
+- [x] All-day end dates handled (a one-day "No School" stays one day); early release recognised; "Holiday Concert", "Picture Day", "Book fair before winter break" are *not* days off; cancelled and long-past events dropped
+- [x] Synergy Learning Academy via .ics file (a .txt is refused); imported files can't be "refreshed"
+- [x] Day off shows on Plan ("No school Fri 9 Oct for Leo · Grand Ridge Elementary"), opens Discover → Free days; Kids → "School this week" shows only this week
+- [x] Removing a child keeps the other child's school and classes attached to the right child
+- [x] Unlink removes the school and the notice
+- [x] With the server: a newsletter photo is compressed, sent to Claude as JPEG without the child's name, the impossible date is dropped, the parent unticks one date before saving; a second photo adds dates without duplicates; daily limit shared with AI plans
+- [x] Server refuses localhost, private IPs, odd ports, credentials in links and non-calendar pages; an unreachable host gives a clear error
+- [x] Chat's context includes upcoming days off (not ordinary school events)
+
 ### Home (Family | Kids)
-- [x] No bottom tabs; greeting, today's weather, Ask bar, Family/Kids switch
+- [x] Greeting, today's weather, Ask bar, Family/Kids switch
 - [x] Family shows 5 together/outing ideas and Plan the weekend; Kids shows 5 different play ideas
 - [x] Per-child filter (e.g. Leo, 8): every idea suits that age; time filter (≤ 30 min) respected
 - [x] Kids: this week's classes, a small + to add a class, Find classes nearby
@@ -87,8 +105,13 @@
 3. "Sam's birthday **party**" was labelled 🎨 Art, because "p**art**y" contains "art"
 4. The place name disappeared when the server removed an unsupported popularity claim
 5. Chat: the same activity could be planned twice in one weekend
+6. Profile: with no family name the avatar showed a broken character (half an emoji)
+7. School form: the browser's own "required" check hid the app's clearer message
+8. Editing the kids list could have attached a school or class to the wrong child (they're now re-mapped)
 
 ## Live checks to run after deploying (needs the real Claude key)
+- School link: on the Grand Ridge calendar page (grandridge.isd411.org → Upcoming events → Calendar) look for a Subscribe / iCal option, paste it in Profile → Leo → Link school, and check a known day off. **Not verified yet:** my sandbox can't reach the site, so I don't know if its feed is iCal (works) or only RSS (won't).
+- School photo: snap a real newsletter and check every date before saving.
 0. MCP: add `https://<worker>/mcp` to Claude, ChatGPT or Gemini, then ask "find a rainy-day activity for a 4-year-old and a swimming pool near Seattle".
 1. Chat: "There's a pumpkin festival near [your city] this Saturday, let's go". Check that the date and times match the event's website.
 2. Chat: "Mia's swimming moved to 10am" and "Skip football on Thursday". Check the Weekend tab.

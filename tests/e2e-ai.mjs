@@ -111,6 +111,42 @@ try {
   await page.evaluate(() => (location.hash = 'memories'));
   await page.getByText('Dinosaur dig in a tray').first().waitFor();
 
+  // Discover puts real "families near you" picks first.
+  await page.evaluate(() => (location.hash = 'discover'));
+  await page.locator('.pin').first().getByText('2 families near you did this').waitFor();
+  if ((await page.locator('.pin').first().getAttribute('data-id')) !== 'scavenger') fail('popular pick should lead the feed');
+  if ((await page.locator('.pin[data-id="scavenger"]').count()) !== 1) fail('popular pick should not be repeated in the feed');
+
+  // Profile → link Mia's preschool from a newsletter photo (AI reads, parent checks).
+  await page.evaluate(() => (location.hash = 'profile'));
+  await page.locator('.kid-row', { hasText: 'Mia' }).getByRole('button', { name: 'Link school' }).click();
+  await page.fill('[name=school]', 'Synergy Learning Academy');
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+  const before = mock.requests.length;
+  await page.setInputFiles('#photo-file', { name: 'newsletter.png', mimeType: 'image/png', buffer: png });
+  await page.getByRole('heading', { name: 'Check these dates' }).waitFor();
+  await page.getByText('This looks like the October newsletter.').waitFor();
+  if ((await page.locator('.review-row').count()) !== 3) fail('expected 3 dates to review (bad date dropped)');
+  const sentImg = mock.requests.slice(before).find((r) => Array.isArray(r.body.messages?.[0]?.content));
+  if (!sentImg || sentImg.body.messages[0].content[0].source.media_type !== 'image/jpeg') fail('photo should be sent to Claude as a compressed JPEG');
+  if (JSON.stringify(sentImg.body).includes('Mia')) fail("the child's name must not be sent with the photo");
+  await page.locator('.review-row', { hasText: 'Harvest parade' }).locator('input').uncheck();
+  await page.getByRole('button', { name: /Save Synergy Learning Academy dates/ }).click();
+  await page.getByRole('heading', { name: 'Synergy Learning Academy' }).waitFor();
+  await page.getByText(/Dates from a photo · just now · 2 upcoming dates/).first().waitFor();
+  if ((await page.locator('.avatar').innerText()) !== '🌱') fail('avatar without a family name should be the sprout, not a broken character');
+  // A second newsletter adds to the dates (no duplicates).
+  await page.getByRole('button', { name: 'Link a different way' }).click();
+  await page.setInputFiles('#photo-file', { name: 'newsletter2.png', mimeType: 'image/png', buffer: png });
+  await page.getByRole('button', { name: /Save Synergy Learning Academy dates/ }).click();
+  await page.locator('#sheet-body').getByText(/3 upcoming dates/).waitFor();
+  await page.keyboard.press('Escape');
+  await page.screenshot({ path: `${SHOTS}/13-school-photo.png`, fullPage: true });
+  // With the server, "Use in Claude or ChatGPT" gives the MCP address.
+  await page.getByRole('button', { name: /Use in Claude or ChatGPT/ }).click();
+  if (!(await page.inputValue('#mcp-url')).endsWith('/mcp')) fail('MCP address should end in /mcp');
+  await page.keyboard.press('Escape');
+
   if (errors.length) fail('page errors:\n' + errors.join('\n'));
   console.log('AI E2E PASSED');
 } catch (e) {

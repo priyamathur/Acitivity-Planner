@@ -5,10 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>LittleRoam — Family & Kids Activities</title>
   <meta name="description" content="Screen-free family and kids activities: ideas by age, places nearby, kids' classes and weekend plans. Ask in plain words. Free." />
-  <meta name="theme-color" content="#FF6B4A" />
+  <meta name="theme-color" content="#FFFFFF" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;600;700;800&display=swap" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
@@ -20,14 +20,18 @@
   <link rel="stylesheet" href="css/styles.css" />
 </head>
 <body>
-  <header class="topbar">
-    <a href="#home" class="brand" aria-label="LittleRoam home"><img src="icons/icon.svg" alt="" width="28" height="28" /> LittleRoam</a>
-    <button id="settings-btn" class="icon-btn" aria-label="Family settings">⚙️</button>
-  </header>
-
   <main>
     <div id="view" tabindex="-1"></div>
   </main>
+
+  <nav class="tabbar" aria-label="Main">
+    <a href="#home" class="tab" data-tab="plan">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2.5"/><path d="M4 10h16M9 3v4M15 3v4M9.5 15l2 2 3.5-3.5"/></svg>Plan</a>
+    <a href="#discover" class="tab" data-tab="discover">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/></svg>Discover</a>
+    <a href="#profile" class="tab" data-tab="profile">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-3.6 3.1-6.2 7-6.2s7 2.6 7 6.2"/></svg>Profile</a>
+  </nav>
 
 
   <div id="sheet" class="sheet" hidden>

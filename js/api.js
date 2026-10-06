@@ -40,3 +40,23 @@ export const askAI = (body) => call('ai', { method: 'POST', body: JSON.stringify
 export const shareActivity = (body) => call('share', { method: 'POST', body: JSON.stringify(body) });
 export const getTrends = (cell, bands) => call(`trends?cell=${encodeURIComponent(cell)}&bands=${encodeURIComponent(bands.join(','))}`);
 export const chatStep = (body) => call('chat', { method: 'POST', body: JSON.stringify(body) });
+export const schoolFeedsEnabled = () => Boolean(health?.ok && health.schoolFeeds);
+export const schoolPhotoEnabled = () => Boolean(health?.ok && health.schoolPhoto);
+export const readSchoolPhoto = (body) => call('school-photo', { method: 'POST', body: JSON.stringify(body) });
+
+// A school calendar feed. Through our server when there is one (school sites
+// usually block browsers from reading their feeds directly), otherwise direct.
+export async function fetchSchoolFeed(url) {
+  const target = schoolFeedsEnabled() ? new URL(`school-feed?url=${encodeURIComponent(url)}`, BASE) : url;
+  let res;
+  try { res = await fetch(target, { cache: 'no-store' }); } catch {
+    throw new Error(schoolFeedsEnabled() ? "Couldn't reach the calendar. Check your connection." : "This school's calendar can't be read from the browser. Download the .ics file from the school's calendar page and choose “Import a calendar file”.");
+  }
+  const text = await res.text();
+  if (!res.ok) {
+    let msg = `Couldn't load that calendar (${res.status}).`;
+    try { msg = JSON.parse(text).error || msg; } catch { /* plain text */ }
+    throw new Error(msg);
+  }
+  return text;
+}

@@ -74,6 +74,17 @@ export function startMockAnthropic(port = 9911) {
       const parsed = body ? JSON.parse(body) : {};
       requests.push({ url: req.url, headers: req.headers, body: parsed });
       if (Array.isArray(parsed.tools)) return reply(res, parsed, chatReply(parsed.messages));
+      // School newsletter photo → dates (one deliberately bad date to be cleaned up server-side).
+      const first = parsed.messages?.[0]?.content;
+      if (Array.isArray(first) && first.some((b) => b.type === 'image')) return reply(res, parsed, { stop_reason: 'end_turn', content: [text(JSON.stringify({
+        note: 'This looks like the October newsletter.',
+        events: [
+          { date: '2026-10-16', end: '2026-10-16', title: 'No school – conference day', kind: 'off' },
+          { date: '2026-10-21', end: '2026-10-21', title: 'Early release 12:30', kind: 'early' },
+          { date: '2026-10-30', end: '2026-10-30', title: 'Harvest parade', kind: 'event' },
+          { date: '2026-02-31', end: '2026-02-31', title: 'Impossible date', kind: 'off' },
+        ],
+      }))] });
       const prompt = String(parsed.messages?.[0]?.content || '');
       const note = prompt.includes("PARENT'S NOTE");
       const wins = [...prompt.matchAll(/\[((?:sat|sun)@\d\d:\d\d)\]/g)].map((m) => m[1]);

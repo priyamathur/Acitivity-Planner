@@ -4,6 +4,7 @@ import { PLACE_TYPES, CLASS_TYPES, findPlaces, geocode, getForecast, getPosition
 import * as store from './store.js';
 import * as api from './api.js';
 import { cellFor, bandsForAges, bandLabel } from './community.js';
+import { parseICS, normaliseFeedUrl, schoolEventsBetween, nextDayOff, addDays } from './school.js';
 
 // Optional: set to a Tally/Google Form/Stripe link to collect Plus early-access sign-ups.
 const WAITLIST_URL = '';
@@ -32,7 +33,9 @@ function toast(msg) {
 }
 
 // ---------------- Routing ----------------
-const VIEWS = ['home', 'weekend', 'chat', 'near', 'ideas', 'memories'];
+const VIEWS = ['home', 'weekend', 'chat', 'near', 'ideas', 'memories', 'discover', 'profile'];
+// Which bottom tab each screen belongs to.
+const TAB_OF = { home: 'plan', weekend: 'plan', chat: 'plan', near: 'plan', ideas: 'plan', discover: 'discover', profile: 'profile', memories: 'profile' };
 
 function route() {
   const hash = location.hash.slice(1) || 'home';
@@ -48,6 +51,8 @@ function route() {
 function show(view) {
   closeSheet();
   $('main').dataset.view = view;
+  document.body.dataset.view = view;
+  $$('.tabbar .tab').forEach((t) => (t.dataset.tab === TAB_OF[view] ? t.setAttribute('aria-current', 'page') : t.removeAttribute('aria-current')));
   const render = VIEW_RENDER[view];
   render($('#view'));
   $('#view').focus({ preventScroll: true });
@@ -69,7 +74,7 @@ function closeSheet() {
   sheet.hidden = true;
   if (location.hash.startsWith('#a/')) history.replaceState(null, '', '#' + ($('main').dataset.view || 'home'));
 }
-const VIEW_RENDER = { home: (r) => renderHome(r), weekend: (r) => renderWeekend(r), chat: (r) => renderChat(r), near: (r) => renderNear(r), ideas: (r) => renderIdeas(r), memories: (r) => renderMemories(r) };
+const VIEW_RENDER = { home: (r) => renderHome(r), weekend: (r) => renderWeekend(r), chat: (r) => renderChat(r), near: (r) => renderNear(r), ideas: (r) => renderIdeas(r), memories: (r) => renderMemories(r), discover: (r) => renderDiscover(r), profile: (r) => renderProfile(r) };
 const rerender = () => { const v = $('main').dataset.view; if (v) VIEW_RENDER[v]($('#view')); };
 
 // ---------------- Activity card & detail ----------------
@@ -170,6 +175,19 @@ function homePicks() {
   return recommend(ctx, { count: 5, seed: daySeed() + home.seed, pool });
 }
 
+const LOGO = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21V11"/><path d="M12 14c-4 0-6-3-6-7 4 0 6 3 6 7z"/><path d="M12 12c0-4 2-6 6-6 0 4-2 6-6 6z"/></svg>';
+const CHEVRON = '<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
+const kidLabel = (k, i) => `${k.name || `Child ${i + 1}`} (${ageFromBirthYear(k.birthYear)})`;
+
+// "No school Fri 9 Oct (Grand Ridge)" when a linked school has a weekday off soon.
+function dayOffNotice() {
+  const off = nextDayOff(S().schools, store.isoDate(), 14);
+  if (!off) return '';
+  const who = kidName(off.kid);
+  return `<a class="notice" href="#discover" id="day-off"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2.5"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>
+    <span>${off.kind === 'early' ? 'Early release' : 'No school'} ${fmtDate(off.firstWeekday, { weekday: 'short', day: 'numeric', month: 'short' })}${who ? ` for ${esc(who)}` : ''} · ${esc(off.school)}. <b>Ideas for a free day ›</b></span></a>`;
+}
+
 function renderHome(root) {
   const s = S();
   const kids = s.family.kids;
@@ -178,56 +196,59 @@ function renderHome(root) {
   const booked = [...weekdays, ...days].flatMap((d) => d.booked.map((c) => ({ ...c, d })));
   const upcoming = booked.filter((c) => !c.d.past);
   const planned = plan ? Object.keys(plan.picks).length : 0;
+  const wkBooked = days.filter((d) => !d.past).reduce((n, d) => n + d.booked.length, 0);
   const picks = homePicks();
   const hello = s.family.name ? `Hi, ${esc(s.family.name)} family` : 'Hi there';
+  const weekSchool = schoolEventsBetween(s.schools, store.isoDate(), weekdays.concat(days).at(-1).date);
+  const first = days.find((d) => !d.past) || days[0];
   root.innerHTML = `
+    <header class="app-head"><span class="logo">${LOGO}</span><span class="brand-name">LittleRoam</span></header>
     <section class="home-head">
-      <h1>${hello} 👋</h1>
-      ${today ? `<span class="chip wx">${weatherIcon(today.code)} ${Math.round(today.max)}°</span>` : ''}
+      <div><p class="eyebrow">${fmtDate(store.isoDate(), { weekday: 'long', day: 'numeric', month: 'long' })}</p><h1>${hello}</h1></div>
+      ${today ? `<span class="wx-pill">${weatherIcon(today.code)} ${Math.round(today.max)}°</span>` : ''}
     </section>
 
     <form id="ask" class="ask-bar" role="search">
-      <span aria-hidden="true">✨</span>
-      <input id="ask-q" class="grow" maxlength="400" autocomplete="off" placeholder="${api.chatEnabled() ? 'Ask anything…' : 'Search ideas, e.g. baking'}" aria-label="Ask LittleRoam" />
-      <button class="btn primary sm">${api.chatEnabled() ? 'Ask' : 'Search'}</button>
+      <svg class="spark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.6L18 9l-4.2 1.4L12 15l-1.8-4.6L6 9l4.2-1.4z"/><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg>
+      <input id="ask-q" class="grow" maxlength="400" autocomplete="off" placeholder="${api.chatEnabled() ? 'Ask anything — rainy Sunday ideas…' : 'Search ideas, e.g. baking'}" aria-label="Ask LittleRoam" />
+      <button class="ask-go" aria-label="${api.chatEnabled() ? 'Ask' : 'Search'}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg></button>
     </form>
+    ${dayOffNotice()}
 
     <div class="seg two home-seg" role="tablist">
-      <button role="tab" data-htab="family" class="${home.tab === 'family' ? 'on' : ''}" aria-selected="${home.tab === 'family'}">👨‍👩‍👧 Family</button>
-      <button role="tab" data-htab="kids" class="${home.tab === 'kids' ? 'on' : ''}" aria-selected="${home.tab === 'kids'}">🧒 Kids</button>
+      <button role="tab" data-htab="family" class="${home.tab === 'family' ? 'on' : ''}" aria-selected="${home.tab === 'family'}">Family</button>
+      <button role="tab" data-htab="kids" class="${home.tab === 'kids' ? 'on' : ''}" aria-selected="${home.tab === 'kids'}">Kids</button>
     </div>
 
     ${home.tab === 'family' ? `
-      <a class="card row-btn feature" href="#weekend">
-        <span>🗓️ <b>Plan the weekend</b><span class="meta">${fmtDate(days[0].date, { day: 'numeric', month: 'short' })} – ${fmtDate(days[1].date, { day: 'numeric', month: 'short' })}${planned ? ` · ${planned} planned` : ''}</span></span><span class="meta">›</span></a>
-      <h2 class="h">Things to do together</h2>`
-    : `${kids.length > 1 ? `<div class="chips-scroll">${[['all', 'All kids'], ...kids.map((k, i) => [String(i), `${k.name || `Child ${i + 1}`} (${ageFromBirthYear(k.birthYear)})`])].map(([k, l]) => `<button class="chip-btn ${home.kid === k ? 'on' : ''}" data-hkid="${k}">${esc(l)}</button>`).join('')}</div>` : ''}
-      <h2 class="h">Play ideas</h2>`}
+      <a class="feature" href="#weekend">
+        <span class="date-tile"><small>${fmtDate(first.date, { weekday: 'short' }).toUpperCase()}</small><b>${fmtDate(first.date, { day: 'numeric' })}</b></span>
+        <span class="feature-text"><b>Plan the weekend</b><span>${fmtDate(days[0].date, { day: 'numeric', month: 'short' })} – ${fmtDate(days[1].date, { day: 'numeric', month: 'short' })}${wkBooked ? ` · ${wkBooked} booked` : ''}${planned ? ` · ${planned} planned` : ''}</span></span>
+        ${CHEVRON}</a>
+      <div class="sec-head"><h2 class="h">Things to do together</h2><a class="see-all" href="#ideas" id="see-all" aria-label="See all family ideas">See all</a></div>`
+    : `${kids.length > 1 ? `<div class="chips-scroll">${[['all', 'All kids'], ...kids.map((k, i) => [String(i), kidLabel(k, i)])].map(([k, l]) => `<button class="chip-btn ${home.kid === k ? 'on' : ''}" data-hkid="${k}">${esc(l)}</button>`).join('')}</div>` : ''}
+      <div class="sec-head"><h2 class="h">Play ideas</h2><a class="see-all" href="#ideas" id="see-all" aria-label="See all kids ideas">See all</a></div>`}
 
     <div class="filters">
       <select class="input sm" id="h-time" aria-label="How long">${Object.entries(TIME_CHIPS).map(([k, l]) => `<option value="${k}" ${home.time === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <select class="input sm" id="h-where" aria-label="Where">${Object.entries(WHERE_CHIPS[home.tab]).map(([k, l]) => `<option value="${k}" ${home.where === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
-      <button class="icon-btn" id="h-shuffle" aria-label="Show other ideas" title="Show other ideas">🔄</button>
+      <button class="icon-btn shuffle" id="h-shuffle" aria-label="Show other ideas" title="Show other ideas"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h11l-3-3M20 17H9l3 3"/></svg></button>
     </div>
     <section class="home-list">${picks.length ? picks.map((a) => card(a, { compact: true })).join('') : '<p class="empty">Nothing fits those filters. Try “Any time”.</p>'}</section>
-    <a class="see-all" href="#ideas" id="see-all">See all ${home.tab === 'family' ? 'family' : 'kids'} ideas ›</a>
 
     ${home.tab === 'family' ? `
       <h2 class="h">Places near us</h2>
-      ${s.location ? `<div class="chips-scroll">${HOME_PLACES.map((k) => `<a class="chip-btn" href="#near" data-ptype="${k}">${PLACE_TYPES[k].emoji} ${PLACE_TYPES[k].label}</a>`).join('')}</div>`
-        : '<a class="card row-btn" href="#near"><span>📍 <b>Set your area</b><span class="meta">for nearby places and weather</span></span><span class="meta">›</span></a>'}
+      ${s.location ? `<div class="place-grid">${HOME_PLACES.slice(0, 6).map((k) => `<a class="place-tile" href="#near" data-ptype="${k}"><span aria-hidden="true">${PLACE_TYPES[k].emoji}</span>${PLACE_TYPES[k].label}</a>`).join('')}</div>`
+        : `<a class="row-btn card" href="#near"><span><b>Set your area</b><span class="meta">for nearby places and weather</span></span>${CHEVRON}</a>`}
       <section id="popular"></section>`
     : `
-      <div class="row space center-v"><h2 class="h">Classes this week</h2><button class="fab sm" id="h-add-class" aria-label="Add a class" title="Add a class">+</button></div>
+      <div class="sec-head"><h2 class="h">Classes this week</h2><button class="fab sm" id="h-add-class" aria-label="Add a class" title="Add a class">+</button></div>
       ${upcoming.length ? `<div class="card class-list">${upcoming.slice(0, 5).map((c) => `<button class="cls-row" data-hclass="${c.id}|${c.d.date}"><span>${esc(classKind(c.title).emoji)} ${esc(c.title)}<span class="meta">${[c.d.today ? 'Today' : c.d.name.slice(0, 3), kidName(c.kid)].filter(Boolean).map(esc).join(' · ')}</span></span><span class="meta">${esc(c.start)}</span></button>`).join('')}
         ${upcoming.length > 5 ? `<button class="link sm" id="h-all-classes">See all ${upcoming.length} ›</button>` : ''}</div>`
         : `<p class="meta">No classes yet. Tap + to add swimming, football, ballet…</p>`}
-      <button class="link find-link" id="h-find">🔎 Find classes nearby</button>`}
-
-    <nav class="explore" aria-label="More">
-      <a class="explore-link" href="#memories">💛 Past adventures</a>
-      <a class="explore-link" href="#ideas">💡 All ideas</a>
-    </nav>`;
+      <button class="link find-link" id="h-find">Find classes nearby ›</button>
+      ${weekSchool.length ? `<h2 class="h">School this week</h2><div class="card class-list school-list">${weekSchool.slice(0, 6).map((e) => `<div class="cls-row"><span>${e.kind === 'off' ? '🏖️' : e.kind === 'early' ? '⏰' : '🏫'} ${esc(e.title)}<span class="meta">${[esc(e.school), kidName(e.kid) && esc(kidName(e.kid))].filter(Boolean).join(' · ')}</span></span><span class="meta">${fmtDate(e.date < store.isoDate() ? store.isoDate() : e.date, { weekday: 'short' })}${e.start ? ` ${esc(e.start)}` : ''}</span></div>`).join('')}</div>`
+        : s.schools.length ? '' : `<a class="link find-link" href="#profile">Link the kids' school calendars ›</a>`}`}`;
 
   $('#ask', root).onsubmit = (e) => {
     e.preventDefault();
@@ -242,6 +263,7 @@ function renderHome(root) {
   $('#h-where', root).onchange = (e) => { home.where = e.target.value; renderHome(root); };
   $('#h-shuffle', root).onclick = () => { home.seed += 17; renderHome(root); };
   $('#see-all', root).onclick = () => Object.assign(ideaFilter, { aud: home.tab, cat: 'all', q: '' });
+  $('#day-off', root)?.addEventListener('click', () => (discover.filter = 'free'));
   $$('[data-ptype]', root).forEach((a) => (a.onclick = () => { nearState.type = a.dataset.ptype; nearState.places = null; }));
   $('#h-add-class', root)?.addEventListener('click', () => classForm());
   $('#h-find', root)?.addEventListener('click', classFinder);
@@ -251,6 +273,319 @@ function renderHome(root) {
     classForm(S().classes.find((c) => c.id === id), booked.find((c) => c.id === id && c.d.date === date)?.d);
   }));
   if (home.tab === 'family') renderPopular();
+}
+
+// ======================= Discover (feed) =======================
+const discover = { filter: 'foryou', seed: 0 };
+const DISCOVER_FILTERS = { foryou: 'For you', weekend: 'This weekend', rainy: 'Rainy day', free: 'Free days' };
+const audLabel = (a) => (audienceOf(a) === 'family' ? 'Family' : 'Kids');
+
+function discoverPicks() {
+  const ctx = { ages: kidAges(), maxMins: 600, place: 'any', weather: null, recentIds: S().recent, favIds: S().favs };
+  const seed = daySeed() + discover.seed;
+  const wk = weekendModel(0).days.filter((d) => !d.past);
+  const pools = {
+    foryou: ACTIVITIES,
+    weekend: ACTIVITIES.filter((a) => a.setting !== 'home'),
+    rainy: ACTIVITIES.filter((a) => a.weather !== 'dry' && a.setting !== 'outside'),
+    free: ACTIVITIES.filter((a) => a.mins >= 60),
+  };
+  if (discover.filter === 'weekend') ctx.weather = wk.some((d) => d.weather === 'wet') ? 'wet' : wk.some((d) => d.weather) ? 'dry' : null;
+  if (discover.filter === 'rainy') ctx.weather = 'wet';
+  return recommend(ctx, { count: 12, seed, pool: pools[discover.filter] || ACTIVITIES });
+}
+
+function pin(a, i, { tag = '', why = '' } = {}) {
+  const fav = S().favs.includes(a.id);
+  return `<article class="pin" data-cat="${a.cat}" data-id="${a.id}">
+    <button class="pin-main" data-open="${a.id}" aria-label="Open ${esc(a.title)}">
+      <span class="pin-art h${i % 3}"><span class="pin-tag">${esc(tag || `${audLabel(a)} · ${settingLabel[a.setting]}`)}</span><span class="pin-emoji" aria-hidden="true">${esc(a.emoji)}</span></span>
+      <span class="pin-text"><strong>${esc(a.title)}</strong><span class="meta">${why ? esc(why) : `${fmtMins(a.mins)} · ages ${a.ages[0]}–${a.ages[1]}`}</span></span>
+    </button>
+    <button class="pin-fav fav ${fav ? 'on' : ''}" data-fav="${a.id}" aria-pressed="${fav}" aria-label="Save ${esc(a.title)}">${fav ? '♥' : '♡'}</button>
+  </article>`;
+}
+
+function renderDiscover(root) {
+  const s = S();
+  const kids = s.family.kids;
+  const where = s.location ? (s.location.label === 'Your location' ? 'near you' : s.location.label.split(',')[0]) : '';
+  const picks = discoverPicks();
+  const today = store.isoDate();
+  const daysOff = discover.filter === 'free' ? schoolEventsBetween(s.schools, today, addDays(today, 60)).filter((e) => e.kind !== 'event').slice(0, 4) : [];
+  root.innerHTML = `
+    <header class="page-head">
+      <p class="eyebrow">${kids.length ? `Picked for ${kids.map((k, i) => esc(kidLabel(k, i))).join(' and ')}` : 'Add your kids in Profile for better picks'}${where ? ` · ${esc(where)}` : ''}</p>
+      <h1>Discover</h1>
+    </header>
+    <div class="chips-scroll" role="tablist">${Object.entries(DISCOVER_FILTERS).map(([k, l]) => `<button role="tab" class="chip-btn ${discover.filter === k ? 'on' : ''}" aria-selected="${discover.filter === k}" data-dfilter="${k}">${l}</button>`).join('')}</div>
+    ${discover.filter === 'free'
+      ? (s.schools.length
+        ? (daysOff.length ? `<div class="card class-list">${daysOff.map((e) => `<div class="cls-row"><span>${e.kind === 'early' ? '⏰' : '🏖️'} ${esc(e.title)}<span class="meta">${esc(e.school)}${kidName(e.kid) ? ` · ${esc(kidName(e.kid))}` : ''}</span></span><span class="meta">${fmtDate(e.date)}${e.end !== e.date ? ` – ${fmtDate(e.end)}` : ''}</span></div>`).join('')}</div>` : '<p class="meta">No days off in the school calendars for the next 2 months.</p>')
+        : '<a class="notice" href="#profile"><span>Link the kids\' school calendars in Profile to see days off here. <b>Link a school ›</b></span></a>')
+      : dayOffNotice()}
+    <section class="pins" id="pins">${picks.length ? picks.map((a, i) => pin(a, i)).join('') : '<p class="empty">Nothing here yet. Try another filter.</p>'}</section>
+    <button class="btn ghost big" id="d-more">Show me different ideas</button>`;
+  $$('[data-dfilter]', root).forEach((b) => (b.onclick = () => { discover.filter = b.dataset.dfilter; discover.seed = 0; renderDiscover(root); }));
+  $('#d-more', root).onclick = () => { discover.seed += 31; renderDiscover(root); window.scrollTo(0, 0); };
+  if (discover.filter === 'foryou') popularPins();
+}
+
+// Real, anonymous "families near you did this" counts, shown first in the feed.
+async function popularPins() {
+  const loc = S().location;
+  const bands = bandsForAges(kidAges());
+  if (!api.communityEnabled() || !loc || !bands.length) return;
+  try {
+    const t = await api.getTrends(cellFor(loc), bands);
+    const el = $('#pins');
+    if (!el || discover.filter !== 'foryou') return;
+    const acts = t.activities.map((x) => ({ a: byId[x.activity], n: x.families })).filter((x) => x.a).slice(0, 2);
+    for (const { a, n } of acts.reverse()) {
+      el.querySelector(`.pin[data-id="${a.id}"]`)?.remove();
+      el.insertAdjacentHTML('afterbegin', pin(a, 0, { tag: 'Popular nearby', why: `${n} families near you did this` }));
+    }
+  } catch { /* the feed works without it */ }
+}
+
+// ======================= Profile =======================
+const initials = (name, i) => (name ? name.slice(0, 2) : `C${i + 1}`);
+const ago = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 2 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
+const schoolOf = (i) => S().schools.find((x) => x.kid === String(i));
+
+function schoolStatus(sc) {
+  const upcoming = sc.events.filter((e) => e.end >= store.isoDate()).length;
+  const how = sc.source === 'feed' ? `Calendar linked · updated ${ago(sc.updated)}` : sc.source === 'file' ? `Calendar file imported ${ago(sc.updated)}` : `Dates from a photo · ${ago(sc.updated)}`;
+  return `${how} · ${upcoming} upcoming date${upcoming === 1 ? '' : 's'}${sc.error ? ' · last refresh failed' : ''}`;
+}
+
+function renderProfile(root) {
+  const s = S();
+  const kids = s.family.kids;
+  const area = s.location ? (s.location.label === 'Your location' ? 'Your location' : s.location.label.split(',').slice(0, 2).join(',')) : '';
+  root.innerHTML = `
+    <header class="profile-head">
+      <span class="avatar" aria-hidden="true">${esc([...(s.family.name.trim() || '🌱')][0].toUpperCase())}</span>
+      <div class="grow"><h1>${s.family.name ? `${esc(s.family.name)} family` : 'Your family'}</h1>
+        <p class="meta">${[area && esc(area), kids.length ? `${kids.length} kid${kids.length > 1 ? 's' : ''}` : 'No kids added yet'].filter(Boolean).join(' · ')}</p></div>
+      <button class="btn sm" id="edit-family">Edit</button>
+    </header>
+
+    <h2 class="label">Kids &amp; schools</h2>
+    <div class="card list-card">
+      ${kids.length ? kids.map((k, i) => {
+        const sc = schoolOf(i);
+        return `<div class="kid-row">
+          <span class="kid-tile k${i % 4}" aria-hidden="true">${esc(initials(k.name, i))}</span>
+          <div class="grow"><p class="kid-name">${esc(k.name || `Child ${i + 1}`)} · ${ageFromBirthYear(k.birthYear)}</p>
+            <p class="meta">${sc ? esc(sc.name) : 'No school linked'}</p>
+            ${sc ? `<p class="ok-line ${sc.error ? 'warn' : ''}">${esc(schoolStatus(sc))}</p>` : ''}</div>
+          <button class="btn sm ${sc ? '' : 'primary'}" data-school="${i}">${sc ? 'Manage' : 'Link school'}</button>
+        </div>`;
+      }).join('') : '<div class="kid-row"><p class="grow meta">Add your kids (birth years only) to get ideas for their ages.</p><button class="btn sm primary" id="add-kids">Add kids</button></div>'}
+    </div>
+
+    <h2 class="label">Settings</h2>
+    <div class="card list-card settings-list">
+      <a class="set-row" href="#near"><span>Home area</span><span class="meta">${area ? esc(area) : 'Not set'} ›</span></a>
+      <label class="set-row"><span>Share anonymously with nearby families<small>Only the activity, age bands and a ~5 km area, when you save a memory</small></span>
+        <input type="checkbox" role="switch" class="switch" id="share-toggle" ${s.shareNearby ? 'checked' : ''} /></label>
+      <a class="set-row" href="#memories"><span>Past adventures</span><span class="meta">${s.memories.length} ›</span></a>
+      <button class="set-row" id="mcp-btn"><span>Use in Claude or ChatGPT</span><span class="meta">Connect ›</span></button>
+      <button class="set-row" id="data-btn"><span>Backup &amp; your data</span><span class="meta">›</span></button>
+    </div>
+    <button class="plus-card" id="plus-btn"><span><b>LittleRoam Plus</b><span>Unlimited Ask · shared family plan · calendar sync</span></span><span class="pill">Learn more</span></button>`;
+  $('#edit-family', root).onclick = settings;
+  $('#add-kids', root)?.addEventListener('click', settings);
+  $$('[data-school]', root).forEach((b) => (b.onclick = () => schoolSheet(Number(b.dataset.school))));
+  $('#share-toggle', root).onchange = (e) => { store.set((st) => (st.shareNearby = e.target.checked)); toast(e.target.checked ? 'Sharing anonymously when you save a memory' : 'Not sharing'); };
+  $('#mcp-btn', root).onclick = mcpSheet;
+  $('#data-btn', root).onclick = dataSheet;
+  $('#plus-btn', root).onclick = plus;
+}
+
+// ---------------- Link a school ----------------
+function saveSchool(i, v) {
+  store.set((s) => {
+    s.schools = s.schools.filter((x) => x.kid !== String(i));
+    s.schools.push({ id: store.uid(), kid: String(i), updated: Date.now(), ...v });
+  });
+}
+
+function schoolSheet(i, { method = null } = {}) {
+  const kid = S().family.kids[i];
+  const who = kid?.name || `Child ${i + 1}`;
+  const sc = schoolOf(i);
+  if (sc && !method) {
+    const today = store.isoDate();
+    const next = sc.events.filter((e) => e.end >= today).slice(0, 8);
+    return openSheet(`<h2>${esc(sc.name)}</h2><p class="meta">${esc(who)} · ${esc(schoolStatus(sc))}</p>
+      ${sc.error ? `<p class="tip">Last refresh failed: ${esc(sc.error)}</p>` : ''}
+      <h3>Coming up</h3>
+      ${next.length ? `<div class="class-list">${next.map((e) => `<div class="cls-row"><span>${e.kind === 'off' ? '🏖️' : e.kind === 'early' ? '⏰' : '🏫'} ${esc(e.title)}<span class="meta">${e.kind === 'off' ? 'No school' : e.kind === 'early' ? 'Early release / late start' : 'School event'}</span></span><span class="meta">${fmtDate(e.date)}${e.end !== e.date ? ` – ${fmtDate(e.end)}` : ''}${e.start ? ` ${esc(e.start)}` : ''}</span></div>`).join('')}</div>` : '<p class="meta">No upcoming dates.</p>'}
+      <div class="col gap mt">
+        ${sc.source === 'feed' ? '<button class="btn primary" id="sc-refresh">Refresh now</button>' : ''}
+        <button class="btn" id="sc-replace">Link a different way</button>
+        <button class="btn ghost danger" id="sc-unlink">Unlink ${esc(sc.name)}</button>
+      </div>`,
+    (el) => {
+      $('#sc-refresh', el)?.addEventListener('click', async (e) => {
+        e.target.disabled = true; e.target.textContent = 'Refreshing…';
+        await refreshSchool(sc, { force: true });
+        schoolSheet(i);
+        rerender();
+      });
+      $('#sc-replace', el).onclick = () => schoolSheet(i, { method: 'choose' });
+      $('#sc-unlink', el).onclick = () => { store.set((s) => (s.schools = s.schools.filter((x) => x.id !== sc.id))); closeSheet(); toast('School unlinked'); rerender(); };
+    });
+  }
+  const photo = api.schoolPhotoEnabled();
+  openSheet(`<h2>Link ${esc(who)}'s school</h2>
+    <p class="meta">Pick whatever your school gives you. LittleRoam only reads dates (days off, early release, events): no grades, no messages, no logins.</p>
+    <form id="school-form" class="col gap">
+      <label>School name<input class="input" name="school" maxlength="80" value="${esc(sc?.name || '')}" placeholder="e.g. Grand Ridge Elementary" /></label>
+      <div class="method ${method === 'url' || method === 'choose' || !method ? 'open' : ''}" data-method="url">
+        <p class="method-title">🔗 Paste a calendar link</p>
+        <p class="meta">From the school website, Brightwheel, ParentSquare or a Google calendar: look for “Subscribe”, “iCal” or “Add to calendar”, and copy the link (it often ends in .ics or starts with webcal://).</p>
+        <div class="row gap"><input class="input grow" name="url" inputmode="url" autocomplete="off" placeholder="https://… or webcal://…" aria-label="Calendar link" /><button class="btn primary" id="link-url" type="submit">Link</button></div>
+      </div>
+      <div class="method" data-method="file">
+        <p class="method-title">📄 Import a calendar file</p>
+        <p class="meta">Downloaded a .ics file from the school? Choose it here. It won't update by itself; import again when the school sends a new one.</p>
+        <label class="btn file-btn">Choose .ics file<input type="file" id="ics-file" accept=".ics,text/calendar" hidden /></label>
+      </div>
+      <div class="method" data-method="photo">
+        <p class="method-title">📷 Snap the newsletter or calendar</p>
+        ${photo ? `<p class="meta">AI reads the dates off the picture and you check them before anything is saved. The photo is sent to Claude and not kept.</p>
+          <label class="btn file-btn">Take or choose a photo<input type="file" id="photo-file" accept="image/*" hidden /></label>`
+        : '<p class="meta">Reading photos uses AI, which is switched on when the app runs on its server with an AI key.</p>'}
+      </div>
+      <p class="status meta" id="school-status" role="status"></p>
+    </form>
+    <details class="help"><summary>Where do I find the calendar link?</summary>
+      <ul class="list">
+        <li><b>School website:</b> open the school's calendar page and look for “Subscribe”, “iCal”, “ICS” or “Add to Google Calendar”.</li>
+        <li><b>ParentSquare, Brightwheel and similar apps:</b> some let parents subscribe to the school calendar from the app, if the school has turned it on. Ask the office if you can't find it.</li>
+        <li><b>Shared Google Calendar:</b> the school's “public address in iCal format”.</li>
+        <li>No link at all? Use a photo of the newsletter instead.</li>
+      </ul>
+      <p class="fine">Menus differ between apps and change over time, so these are pointers, not exact steps.</p></details>`,
+  (el) => {
+    const status = (t, err = false) => { const p = $('#school-status', el); p.textContent = t; p.classList.toggle('error', err); };
+    const name = () => $('[name=school]', el).value.trim();
+    const need = () => { if (!name()) { status('Add the school name first.', true); $('[name=school]', el).focus(); return false; } return true; };
+    const finish = (v) => {
+      const upcoming = v.events.filter((e) => e.end >= store.isoDate());
+      const off = upcoming.filter((e) => e.kind === 'off').length;
+      saveSchool(i, v);
+      toast(`${name()} linked: ${upcoming.length} upcoming date${upcoming.length === 1 ? '' : 's'}, ${off} day${off === 1 ? '' : 's'} off`);
+      schoolSheet(i);
+      rerender();
+    };
+    $('#school-form', el).onsubmit = async (e) => {
+      e.preventDefault();
+      if (!need()) return;
+      const url = normaliseFeedUrl($('[name=url]', el).value);
+      if (!url) return status('Paste the calendar link. It starts with https:// or webcal://.', true);
+      status('Reading the calendar…');
+      try {
+        const events = parseICS(await api.fetchSchoolFeed(url), { today: store.isoDate() });
+        finish({ name: name(), source: 'feed', url, events });
+      } catch (err) { status(err.message, true); }
+    };
+    $('#ics-file', el).onchange = async (e) => {
+      const f = e.target.files[0];
+      e.target.value = ''; // so choosing the same file again still works
+      if (!f || !need()) return;
+      try {
+        if (f.size > 2_000_000) throw new Error('That file is too big to be a school calendar.');
+        finish({ name: name(), source: 'file', events: parseICS(await f.text(), { today: store.isoDate() }) });
+      } catch (err) { status(err.message, true); }
+    };
+    $('#photo-file', el)?.addEventListener('change', async (e) => {
+      const f = e.target.files[0];
+      e.target.value = '';
+      if (!f || !need()) return;
+      status('Reading the dates… this can take a few seconds.');
+      try {
+        const blob = await store.compressImage(f, 1600, 0.85);
+        const image = await new Promise((r, j) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.onerror = () => j(new Error('Could not read the photo.')); fr.readAsDataURL(blob); });
+        const res = await api.readSchoolPhoto({ fam: famId(), image, today: store.isoDate(), school: name() });
+        reviewPhotoDates(i, name(), res);
+      } catch (err) { status(err.message, true); }
+    });
+  });
+}
+
+// AI-read dates are only saved after the parent has checked them.
+function reviewPhotoDates(i, name, { events, note }) {
+  openSheet(`<h2>Check these dates</h2><p class="meta">${esc(note || 'Here is what I could read.')} Untick anything that's wrong.</p>
+    ${events.length ? `<form id="review" class="col gap-sm">${events.map((e, n) => `<label class="review-row"><input type="checkbox" name="keep" value="${n}" checked />
+      <span><b>${esc(e.title)}</b><span class="meta">${fmtDate(e.date)}${e.end !== e.date ? ` – ${fmtDate(e.end)}` : ''} · ${e.kind === 'off' ? 'No school' : e.kind === 'early' ? 'Early release' : 'Event'}</span></span></label>`).join('')}
+      <button class="btn primary big">Save ${esc(name)} dates</button></form>`
+    : '<p class="empty">No dates found in that picture. Try a clearer photo, or paste the calendar link.</p><button class="btn" id="again">Try again</button>'}`,
+  (el) => {
+    $('#again', el)?.addEventListener('click', () => schoolSheet(i, { method: 'photo' }));
+    $('#review', el)?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const keep = new Set(new FormData(e.target).getAll('keep').map(Number));
+      const prev = schoolOf(i);
+      const kept = events.filter((_, n) => keep.has(n));
+      // Photos add to what's there (a newsletter at a time); a new school name starts fresh.
+      const merged = prev && prev.source === 'photo' && prev.name === name ? [...prev.events, ...kept] : kept;
+      const uniq = [...new Map(merged.map((x) => [`${x.date}|${x.title}`, x])).values()].sort((a, b) => a.date.localeCompare(b.date));
+      saveSchool(i, { name, source: 'photo', events: uniq });
+      toast(`Saved ${kept.length} date${kept.length === 1 ? '' : 's'}`);
+      schoolSheet(i);
+      rerender();
+    });
+  });
+}
+
+// Linked calendar feeds refresh once a day when the app opens.
+async function refreshSchool(sc, { force = false } = {}) {
+  if (sc.source !== 'feed' || (!force && Date.now() - sc.updated < 20 * 3600 * 1000)) return;
+  try {
+    const events = parseICS(await api.fetchSchoolFeed(sc.url), { today: store.isoDate() });
+    store.set((s) => { const x = s.schools.find((y) => y.id === sc.id); if (x) Object.assign(x, { events, updated: Date.now(), error: undefined }); });
+  } catch (err) {
+    store.set((s) => { const x = s.schools.find((y) => y.id === sc.id); if (x) x.error = err.message; });
+  }
+}
+
+function mcpSheet() {
+  const server = api.chatEnabled() || api.communityEnabled();
+  const url = `${location.origin}/mcp`;
+  openSheet(`<h2>Use LittleRoam in Claude or ChatGPT</h2>
+    <p class="meta">LittleRoam has an MCP server, so AI assistants that support custom connectors can search our activities, find places, check the weather and plan a day.</p>
+    ${server ? `<label>Server address<div class="row gap"><input class="input grow" readonly value="${esc(url)}" id="mcp-url" /><button class="btn" id="copy-mcp">Copy</button></div></label>
+      <ol class="list steps"><li>In your assistant's settings, find connectors (sometimes called integrations, tools or MCP servers).</li><li>Add a custom connector and paste the address above. No sign-in is needed.</li><li>Ask something like “Find a rainy-day activity for a 5-year-old near Issaquah”.</li></ol>
+      <p class="fine">Which assistants and plans support custom connectors changes often; check your assistant's help pages. The MCP server only sees what you type into the assistant, never your LittleRoam plans or kids.</p>`
+    : '<p class="empty">The MCP server runs with the full LittleRoam server, which this copy of the app isn\'t using.</p>'}`,
+  (el) => $('#copy-mcp', el)?.addEventListener('click', async () => { try { await navigator.clipboard.writeText(url); toast('Copied'); } catch { $('#mcp-url', el).select(); } }));
+}
+
+function dataSheet() {
+  openSheet(`<h2>Backup &amp; your data</h2><p class="meta">Everything is stored only on this device. Back it up so you never lose your memories (photos are not included in the backup file).</p>
+    <div class="col gap"><button class="btn" id="export">⬇ Export backup</button><label class="btn">⬆ Import backup<input type="file" id="import" accept="application/json" hidden /></label><button class="btn ghost danger" id="wipe">Erase everything</button></div>`,
+  (el) => {
+    $('#export', el).onclick = () => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([store.exportJSON()], { type: 'application/json' }));
+      a.download = `littleroam-backup-${store.isoDate()}.json`;
+      a.click();
+    };
+    $('#import', el).onchange = async (e) => {
+      try { store.importJSON(await e.target.files[0].text()); toast('Backup restored'); closeSheet(); route(); } catch (err) { toast(err.message); }
+    };
+    $('#wipe', el).onclick = () => {
+      if (!confirm('Erase all plans, memories and settings on this device?')) return;
+      store.reset();
+      indexedDB.deleteDatabase('littleroam-photos');
+      location.hash = '';
+      location.reload();
+    };
+  });
 }
 
 // ======================= The weekend =======================
@@ -621,10 +956,12 @@ function appStateText() {
   const s = S();
   const now = new Date();
   const lines = [`Today: ${DAY_NAMES[dayKeyOf(store.isoDate(now))]} ${store.isoDate(now)}, ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`];
-  lines.push(`Area: ${s.location ? (s.location.label === 'Your location' ? 'set (from GPS, no city name)' : s.location.label) : 'not set (Near me tab)'}`);
+  lines.push(`Area: ${s.location ? (s.location.label === 'Your location' ? 'set (from GPS, no city name)' : s.location.label) : 'not set (Profile → Home area)'}`);
   lines.push(`Kids: ${s.family.kids.length ? s.family.kids.map((k, i) => `${k.name || `Child ${i + 1}`} (age ${ageFromBirthYear(k.birthYear)})`).join(', ') : 'not added yet'}`);
   lines.push('Classes & events:');
   lines.push(...(s.classes.length ? s.classes.map((c) => `- id ${c.id}: ${c.title} | ${c.repeat === 'once' ? `once on ${c.date}` : `weekly ${classDays(c).join(',')}`} ${c.start}-${c.end} | ${kidName(c.kid) || 'everyone'}${c.where ? ` | at ${c.where}` : ''}${c.skip ? ` | skipped: ${Object.keys(c.skip).join(',')}` : ''}`) : ['- none']));
+  const school = schoolEventsBetween(s.schools, store.isoDate(now), addDays(store.isoDate(now), 21)).filter((e) => e.kind !== 'event');
+  if (school.length) lines.push('School days off / early release (next 3 weeks):', ...school.map((e) => `- ${e.date}${e.end !== e.date ? ` to ${e.end}` : ''}: ${e.title} (${e.school}${kidName(e.kid) ? `, ${kidName(e.kid)}` : ''})`));
   for (const off of [0, 1]) lines.push(weekendStateText(off));
   return `<app_state>\n${lines.join('\n')}\n</app_state>`;
 }
@@ -737,7 +1074,7 @@ async function runTool(name, input) {
     }
     case 'find_places': {
       const loc = S().location;
-      if (!loc) return fail("The family hasn't set their area yet. Ask them to tap Near me → Use my location.");
+      if (!loc) return fail("The family hasn't set their area yet. Ask them to open Profile → Home area.");
       if (!PLACE_TYPES[input.type] && !CLASS_TYPES[input.type]) return fail('Unknown place type.');
       try {
         const places = (await findPlaces(input.type, loc, input.radius_km || 5)).filter((p) => p.named).slice(0, 8);
@@ -1056,7 +1393,7 @@ function renderMemories(root) {
   const weekendsOut = new Set(thisYear.filter((m) => [0, 6].includes(new Date(m.date + 'T12:00').getDay())).map((m) => { const d = new Date(m.date + 'T12:00'); d.setDate(d.getDate() - ((d.getDay() + 1) % 7)); return store.isoDate(d); })).size;
   const outdoors = thisYear.filter((m) => m.activityId && byId[m.activityId]?.setting !== 'home').length;
   root.innerHTML = `
-    <a class="back" href="#home">‹ Home</a>
+    <a class="back" href="#profile">‹ Profile</a>
     <section class="hero"><h1>Past adventures</h1><p class="lede">Private to your family. No likes, no followers, no comparing.</p></section>
     <div class="grid three stats">
       <div class="stat"><strong>${weekendsOut}</strong><span>${weekendsOut === 1 ? 'weekend' : 'weekends'} with an adventure</span></div>
@@ -1114,54 +1451,42 @@ function recap(mems, year) {
 // ---------------- Settings, onboarding, Plus ----------------
 function settings() {
   const s = S();
-  openSheet(`<h2>Family settings</h2>
+  openSheet(`<h2>Your family</h2>
     <form id="fam" class="col gap">
       <label>Family name (optional)<input class="input" name="name" value="${esc(s.family.name)}" placeholder="e.g. Mathur" /></label>
       <fieldset><legend>Kids — birth years only, nothing else needed</legend><div id="kids" class="col gap-sm"></div>
         <button type="button" class="btn sm" id="add-kid">+ Add a child</button></fieldset>
       <button class="btn primary">Save</button>
     </form>
-    <hr/>
-    <h3>Your data</h3><p class="meta">Everything is stored only on this device. Back it up so you never lose your memories (photos are not included in the backup file).</p>
-    <div class="row gap wrap"><button class="btn" id="export">⬇ Export backup</button><label class="btn">⬆ Import<input type="file" id="import" accept="application/json" hidden /></label><button class="btn ghost danger" id="wipe">Erase everything</button></div>
-    <hr/><button class="btn ghost" id="plus-btn">✨ About LittleRoam Plus</button>`,
+`,
   (el) => {
     const kidsEl = $('#kids', el);
     const yr = new Date().getFullYear();
-    const row = (k = { name: '', birthYear: yr - 4 }) => {
-      kidsEl.insertAdjacentHTML('beforeend', `<div class="row gap kid"><input class="input grow" name="kname" placeholder="Nickname (optional)" value="${esc(k.name)}" aria-label="Nickname" />
+    const row = (k = { name: '', birthYear: yr - 4 }, idx = '') => {
+      kidsEl.insertAdjacentHTML('beforeend', `<div class="row gap kid" data-orig="${idx}"><input class="input grow" name="kname" placeholder="Nickname (optional)" value="${esc(k.name)}" aria-label="Nickname" />
         <select class="input sm" name="kyear" aria-label="Birth year">${Array.from({ length: 16 }, (_, i) => yr - i).map((y) => `<option ${Number(k.birthYear) === y ? 'selected' : ''}>${y}</option>`).join('')}</select>
         <button type="button" class="icon-btn" aria-label="Remove child">✕</button></div>`);
       const last = kidsEl.lastElementChild;
       $('button', last).onclick = () => last.remove();
     };
-    (s.family.kids.length ? s.family.kids : [undefined]).forEach((k) => row(k));
+    (s.family.kids.length ? s.family.kids : [undefined]).forEach((k, i) => row(k, k ? i : ''));
     $('#add-kid', el).onclick = () => row();
     $('#fam', el).onsubmit = (e) => {
       e.preventDefault();
-      const kids = $$('.kid', el).map((r) => ({ name: $('[name=kname]', r).value.trim(), birthYear: Number($('[name=kyear]', r).value) }));
-      store.set((st) => { st.family = { name: $('[name=name]', el).value.trim(), kids }; st.onboarded = true; });
+      const rows = $$('.kid', el);
+      const kids = rows.map((r) => ({ name: $('[name=kname]', r).value.trim(), birthYear: Number($('[name=kyear]', r).value) }));
+      // Classes and schools point at a child by position, so follow each child to their new place.
+      const moved = Object.fromEntries(rows.map((r, i) => [r.dataset.orig, String(i)]).filter(([o]) => o !== ''));
+      store.set((st) => {
+        st.family = { name: $('[name=name]', el).value.trim(), kids };
+        st.onboarded = true;
+        for (const c of st.classes) if (c.kid !== '' && c.kid != null) c.kid = moved[c.kid] ?? '';
+        st.schools = st.schools.filter((x) => moved[x.kid] != null).map((x) => ({ ...x, kid: moved[x.kid] }));
+      });
       closeSheet();
       toast('Saved');
       route();
     };
-    $('#export', el).onclick = () => {
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([store.exportJSON()], { type: 'application/json' }));
-      a.download = `littleroam-backup-${store.isoDate()}.json`;
-      a.click();
-    };
-    $('#import', el).onchange = async (e) => {
-      try { store.importJSON(await e.target.files[0].text()); toast('Backup restored'); closeSheet(); route(); } catch (err) { toast(err.message); }
-    };
-    $('#wipe', el).onclick = () => {
-      if (!confirm('Erase all plans, memories and settings on this device?')) return;
-      store.reset();
-      indexedDB.deleteDatabase('littleroam-photos');
-      location.hash = '';
-      location.reload();
-    };
-    $('#plus-btn', el).onclick = plus;
   });
 }
 
@@ -1187,7 +1512,7 @@ function plus() {
 function onboarding() {
   openSheet(`<div class="onboard"><span class="big-emoji">🌱</span><h2>Welcome to LittleRoam</h2>
     <p class="lede">Your family's weekend, planned in a minute: around the kids' classes, with screen-free adventures in the free time.</p>
-    <ul class="list"><li>🗓️ Add swimming, football, ballet… once</li><li>✨ Free time filled with ideas that fit the weather</li><li>💛 Private weekend memories: no likes, no comparing</li></ul>
+    <ul class="list"><li>🗓️ Add swimming, football, ballet… once</li><li>🏫 Link school calendars to see days off</li><li>✨ Free time filled with ideas that fit the weather</li><li>💛 Private memories: no likes, no comparing</li></ul>
     <div class="row gap wrap"><button class="btn primary" id="ob-start">Add my kids' ages</button><button class="btn ghost" id="ob-skip">Skip for now</button></div></div>`,
   (el) => {
     $('#ob-start', el).onclick = settings;
@@ -1205,16 +1530,16 @@ async function loadForecast() {
 }
 
 // ---------------- Boot ----------------
-$('#settings-btn').onclick = settings;
 $('#sheet').addEventListener('click', (e) => { if (e.target.id === 'sheet') closeSheet(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); });
 window.addEventListener('hashchange', route);
 route();
 loadForecast();
 // Turn on AI and Popular-near-you once we know the server supports them.
-api.checkHealth().then(() => {
+api.checkHealth().then(async () => {
+  for (const sc of S().schools) await refreshSchool(sc);
   const v = $('main').dataset.view;
-  if ((api.aiEnabled() || api.communityEnabled()) && ['home', 'weekend', 'chat'].includes(v) && $('#sheet').hidden) rerender();
+  if ($('#sheet').hidden && ['home', 'weekend', 'chat', 'discover', 'profile'].includes(v)) rerender();
 });
 if (!S().onboarded && !location.hash.startsWith('#a/')) onboarding();
 

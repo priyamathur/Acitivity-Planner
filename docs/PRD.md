@@ -9,6 +9,11 @@
 
 ---
 
+## 0b. Decision log v3.1: three tabs and school calendars
+- **Three tabs: Plan · Discover · Profile.** *Plan* is Home (Family | Kids, ask bar, the weekend). *Discover* is a Pinterest-style feed matched to the kids' ages, the area, the weather and school days off, with real anonymous "families near you" picks first. *Profile* holds the family, kids and schools, the home area, sharing, past adventures, the MCP connector, backup and Plus. (This replaces v3.0's "no tabs" decision after user feedback.)
+- **Visual design** follows the approved Claude Design canvas: white canvas, one green accent, apricot "Plan the weekend" card, Bricolage Grotesque + DM Sans.
+- **Linking a school = bringing in its calendar, not its account.** School apps (Skyward, ParentSquare, Brightwheel…) don't offer parent sign-in to outside apps as far as we could find, and we don't want grades or messages anyway. Three ways in: paste the school's calendar link (.ics / webcal, refreshed daily through our server), import a .ics file, or snap the newsletter (Claude reads the dates; the parent checks them before saving). Days off and early release show on Plan, in Discover's *Free days*, and in chat's context. Email forwarding is shown in the design but **not built** (it needs an inbound-mail service).
+
 ## 0a. Decision log v3.0: family + kids activities, ask bar, MCP
 After testing the weekend-only version, the product widens again, but with a much simpler surface:
 - **Home has two sections: 👨‍👩‍👧 Family** (do things together and go out, places, Plan the weekend) **and 🧒 Kids** (play ideas per child and age, classes, find classes nearby). Parents think in these two modes: "what can we do together" and "what can the kids do".

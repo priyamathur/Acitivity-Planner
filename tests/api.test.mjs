@@ -154,6 +154,42 @@ try {
   assert.equal(cr.status, 413);
   assert.match((await cr.json()).error, /too long/);
 
+  // --- School calendars ---
+  assert.equal(health.schoolFeeds, true);
+  assert.equal(health.schoolPhoto, true);
+  for (const bad of ['', 'not a link', 'http://localhost:8787/api/health', 'https://127.0.0.1/x.ics', 'https://10.1.2.3/x.ics', 'file:///etc/passwd', 'https://intranet/feed.ics']) {
+    const res = await fetch(`${BASE}/api/school-feed?url=${encodeURIComponent(bad)}`);
+    assert.equal(res.status, 400, `should refuse ${bad}`);
+    assert.match((await res.json()).error, /calendar link/);
+  }
+  // A real host we can't reach from the test sandbox → a clear 502, not a crash.
+  const unreachable = await fetch(`${BASE}/api/school-feed?url=${encodeURIComponent('webcal://calendar.grandridge.invalid/feed.ics')}`);
+  assert.equal(unreachable.status, 502);
+  assert.match((await unreachable.json()).error, /Couldn't reach that calendar/);
+
+  const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  assert.equal((await post('/api/school-photo', { fam: 'family-photo1', image: 'data:text/html;base64,PGgxPg==' })).status, 400, 'only images');
+  assert.equal((await post('/api/school-photo', { fam: 'x', image: PNG })).status, 400, 'family id required');
+  let pr = await post('/api/school-photo', { fam: 'family-photo1', image: PNG, today: '2026-10-07', school: 'Synergy Learning Academy' });
+  assert.equal(pr.status, 200, await pr.clone().text());
+  const pj = await pr.json();
+  assert.deepEqual(pj.events.map((e) => [e.date, e.kind]), [['2026-10-16', 'off'], ['2026-10-21', 'early'], ['2026-10-30', 'event']], 'impossible date dropped');
+  assert.match(pj.note, /October newsletter/);
+  const preq = mock.requests.at(-1).body;
+  const blocks = preq.messages[0].content;
+  assert.equal(blocks[0].type, 'image');
+  assert.equal(blocks[0].source.media_type, 'image/png');
+  assert.match(blocks[1].text, /TODAY: 2026-10-07/);
+  assert.match(blocks[1].text, /SCHOOL: Synergy Learning Academy/);
+  assert.equal(preq.output_config.format.type, 'json_schema');
+  assert.equal(preq.model, 'claude-opus-5-5');
+  // Photo reads share the daily AI limit (3 in this test).
+  assert.equal((await post('/api/school-photo', { fam: 'family-photo1', image: PNG })).status, 200);
+  assert.equal((await post('/api/school-photo', { fam: 'family-photo1', image: PNG })).status, 200);
+  pr = await post('/api/school-photo', { fam: 'family-photo1', image: PNG });
+  assert.equal(pr.status, 429);
+  assert.match((await pr.json()).error, /paste the school's calendar link/);
+
   console.log('API TESTS PASSED');
 } catch (e) {
   console.error('API TESTS FAILED:', e.message, '\n--- wrangler log ---\n', log.slice(-3000));
