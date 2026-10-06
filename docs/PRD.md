@@ -1,13 +1,26 @@
 # LittleRoam — Product Requirements Document
 
-**Product:** LittleRoam, the family **weekend planner**: plans around the kids' classes, fills the free time with screen-free adventures nearby, and keeps the memories
-**Version:** 2.0 (weekend focus), October 2026
+**Product:** LittleRoam, screen-free **family and kids activities**: ideas by age, places and classes nearby, weekend plans around the kids' classes, an ask-anything assistant, and an MCP server for AI assistants
+**Version:** 3.0 (family + kids activities, ask bar, MCP), October 2026
 **Owner:** Product / Founder
 **Status:** Built and tested. v2.0 refocuses the whole product on the weekend.
 
 > **How to read the numbers.** Every market figure below has a source and a confidence label. **[V]** means I checked it in a search result this session. **[U]** means it came from the brief or a secondary source and I could not confirm it against the primary source. My sandbox blocked access to Pinterest's newsroom, so check the **[U]** figures before you put them in a pitch deck.
 
 ---
+
+## 0b. Decision log v3.1: three tabs and school calendars
+- **Three tabs: Plan · Discover · Profile.** *Plan* is Home (Family | Kids, ask bar, the weekend). *Discover* is a Pinterest-style feed matched to the kids' ages, the area, the weather and school days off, with real anonymous "families near you" picks first. *Profile* holds the family, kids and schools, the home area, sharing, past adventures, the MCP connector, backup and Plus. (This replaces v3.0's "no tabs" decision after user feedback.)
+- **Visual design** follows the approved Claude Design canvas: white canvas, one green accent, apricot "Plan the weekend" card, Bricolage Grotesque + DM Sans.
+- **Linking a school = bringing in its calendar, not its account.** School apps (Skyward, ParentSquare, Brightwheel…) don't offer parent sign-in to outside apps as far as we could find, and we don't want grades or messages anyway. Three ways in: paste the school's calendar link (.ics / webcal, refreshed daily through our server), import a .ics file, or snap the newsletter (Claude reads the dates; the parent checks them before saving). Days off and early release show on Plan, in Discover's *Free days*, and in chat's context. Email forwarding is shown in the design but **not built** (it needs an inbound-mail service).
+
+## 0a. Decision log v3.0: family + kids activities, ask bar, MCP
+After testing the weekend-only version, the product widens again, but with a much simpler surface:
+- **Home has two sections: 👨‍👩‍👧 Family** (do things together and go out, places, Plan the weekend) **and 🧒 Kids** (play ideas per child and age, classes, find classes nearby). Parents think in these two modes: "what can we do together" and "what can the kids do".
+- **No bottom tabs.** Everything starts from Home; other screens open from it and have a "‹ Home" back link.
+- **Chat becomes an "Ask anything" bar on Home**, not a tab. Without AI, the same bar searches the library, so it's never a dead end.
+- **MCP server:** a public, no-login MCP endpoint lets Claude, ChatGPT, Gemini and other assistants search activities, find places and class venues, get the weather and plan a day. It is a **distribution channel**: parents who already ask a chatbot "what should we do this weekend?" get LittleRoam's curated, safety-checked answers with a link back to the app. Personal tools (reading or editing *your* family's plan from a chatbot) need accounts and sign-in, so they're a later step.
+- **Kept from v2:** the weekend timeline, weekday and weekend classes, photos in Past adventures, the AI weekend plan, Popular near you.
 
 ## 0. Decision log: why only the weekend (v2.0)
 v1 tried to cover every moment: daily ideas, weekly plans, bucket lists, life skills and traditions. v2 narrows to **one job: "What are we doing this weekend?"** The reasons:
@@ -111,6 +124,7 @@ Calendars know the schedule but don't suggest anything. Idea apps suggest things
 | F11 | **Memories:** private journal with photos, a "weekends with an adventure" count and a yearly recap | ✅ |
 | F12 | **Installable PWA**, shareable activity links, backup export/import | ✅ |
 | F13 | **Plus pricing page** (interest only, no payments) | ✅ (stub) |
+| F14 | **💬 Chat: "just talk":** natural-language requests ("there's an event I'm exploring, let's do it"). Claude uses web search to look up event details, then edits the app through 8 tools (add / update / remove / skip calendar items, plan a weekend, set or clear a slot, find places). Each change shows as a receipt. Tool inputs are validated on the device, and a failed tool changes nothing. Daily message limit; tool steps are free. | ✅ |
 
 ### Not built yet (next)
 - **Calendar sync:** import classes from, and export the plan to, Google or Apple Calendar (Plus)

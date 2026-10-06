@@ -3,35 +3,36 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>LittleRoam — Family Weekend Planner</title>
-  <meta name="description" content="Plan your family weekend in a minute: around the kids' classes, with screen-free adventures nearby in the free time. Free." />
-  <meta name="theme-color" content="#2f6b4f" />
+  <title>LittleRoam — Family & Kids Activities</title>
+  <meta name="description" content="Screen-free family and kids activities: ideas by age, places nearby, kids' classes and weekend plans. Ask in plain words. Free." />
+  <meta name="theme-color" content="#FFFFFF" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="LittleRoam" />
-  <meta property="og:title" content="LittleRoam — Family Weekend Planner" />
-  <meta property="og:description" content="Your family weekend, planned around the kids' classes." />
+  <meta property="og:title" content="LittleRoam — Family & Kids Activities" />
+  <meta property="og:description" content="Family and kids activities, places nearby and weekend plans." />
   <meta property="og:image" content="icons/icon-512.png" />
   <link rel="stylesheet" href="css/styles.css" />
 </head>
 <body>
-  <header class="topbar">
-    <a href="#weekend" class="brand" aria-label="LittleRoam home"><img src="icons/icon.svg" alt="" width="28" height="28" /> LittleRoam</a>
-    <button id="settings-btn" class="icon-btn" aria-label="Family settings">⚙️</button>
-  </header>
-
   <main>
     <div id="view" tabindex="-1"></div>
   </main>
 
-  <nav class="tabs" aria-label="Main">
-    <a class="tab" data-view="weekend" href="#weekend"><span aria-hidden="true">🗓️</span>Weekend</a>
-    <a class="tab" data-view="near" href="#near"><span aria-hidden="true">📍</span>Near me</a>
-    <a class="tab" data-view="ideas" href="#ideas"><span aria-hidden="true">💡</span>Ideas</a>
-    <a class="tab" data-view="memories" href="#memories"><span aria-hidden="true">💛</span>Memories</a>
+  <nav class="tabbar" aria-label="Main">
+    <a href="#home" class="tab" data-tab="plan">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2.5"/><path d="M4 10h16M9 3v4M15 3v4M9.5 15l2 2 3.5-3.5"/></svg>Plan</a>
+    <a href="#discover" class="tab" data-tab="discover">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/></svg>Discover</a>
+    <a href="#profile" class="tab" data-tab="profile">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-3.6 3.1-6.2 7-6.2s7 2.6 7 6.2"/></svg>Profile</a>
   </nav>
+
 
   <div id="sheet" class="sheet" hidden>
     <div class="sheet-panel" role="dialog" aria-modal="true">
@@ -41,7 +42,7 @@
   </div>
   <div id="toast" class="toast" role="status"></div>
 
-  <noscript><p style="padding:16px">LittleRoam needs JavaScript to plan your adventures.</p></noscript>
+  <noscript><p class="pad">LittleRoam needs JavaScript to plan your adventures.</p></noscript>
   <script type="module" src="js/app.js"></script>
 </body>
 </html>

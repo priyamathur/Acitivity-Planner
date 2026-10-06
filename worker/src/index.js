@@ -3,6 +3,9 @@
 import { ACTIVITIES } from '../../js/data.js';
 import { isValidCell, isValidBand, neighbourCells } from '../../js/community.js';
 import { suggest, AIError } from './ai.js';
+import { chatStep, validMessages, isNewUserTurn } from './chat.js';
+import { handleMcp } from './mcp.js';
+import { fetchICS, datesFromPhoto } from './school.js';
 
 export { Community } from './community.js';
 
@@ -11,7 +14,7 @@ const PLACE_TYPES = new Set(['playground', 'park', 'nature', 'library', 'museum'
 
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
-  headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+  headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' },
 });
 const bad = (msg, status = 400) => json({ error: msg }, status);
 
@@ -20,9 +23,10 @@ async function sha256(s) {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
 }
 
-async function readJSON(request) {
-  if (Number(request.headers.get('content-length') || 0) > 16000) throw new Error('too large');
-  return request.json();
+async function readJSON(request, max = 16000) {
+  const text = await request.text();
+  if (text.length > max) throw new RangeError('too large');
+  return JSON.parse(text);
 }
 
 const famOk = (f) => typeof f === 'string' && /^[a-z0-9-]{8,64}$/i.test(f);
@@ -33,9 +37,19 @@ export default {
     const url = new URL(request.url);
     const community = env.COMMUNITY.get(env.COMMUNITY.idFromName('global'));
 
+    // Public MCP server for AI assistants (Claude, ChatGPT, Gemini…).
+    if (url.pathname === '/mcp') {
+      if (request.method === 'POST') {
+        const ip = await sha256(request.headers.get('cf-connecting-ip') || 'local');
+        const usage = await community.consume([{ key: `m:${ip}`, limit: Number(env.MCP_DAILY_LIMIT || 1000) }]);
+        if (!usage.ok) return new Response(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: 'Daily request limit reached for this network. Try again tomorrow.' }, id: null }), { status: 429, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' } });
+      }
+      return handleMcp(request, env);
+    }
+
     try {
       if (url.pathname === '/api/health') {
-        return json({ ok: true, ai: Boolean(env.ANTHROPIC_API_KEY), community: true, aiDailyLimit: Number(env.AI_DAILY_LIMIT || 5), minFamilies: Number(env.MIN_FAMILIES || 3) });
+        return json({ ok: true, ai: Boolean(env.ANTHROPIC_API_KEY), chat: Boolean(env.ANTHROPIC_API_KEY), community: true, schoolFeeds: true, schoolPhoto: Boolean(env.ANTHROPIC_API_KEY), aiDailyLimit: Number(env.AI_DAILY_LIMIT || 5), chatDailyLimit: Number(env.CHAT_DAILY_LIMIT || 20), minFamilies: Number(env.MIN_FAMILIES || 3) });
       }
 
       // Anonymous "we did this" signal for Popular near you.
@@ -115,6 +129,67 @@ export default {
           return json({ ...result, remaining: usage.remaining });
         } catch (err) {
           await community.refund([famKey, ipKey]);
+          if (err instanceof AIError) return bad(err.message, err.status);
+          throw err;
+        }
+      }
+
+      // One step of the chat loop (the browser runs the tools and calls again).
+      if (url.pathname === '/api/chat' && request.method === 'POST') {
+        if (!env.ANTHROPIC_API_KEY) return bad('Chat needs AI, which is not enabled on this server.', 503);
+        let b;
+        try { b = await readJSON(request, 400000); } catch (e) { return bad(e instanceof RangeError ? 'This chat is too long. Please start a new chat.' : 'invalid request', 413); }
+        if (!famOk(b.fam) || !validMessages(b.messages)) return bad('invalid request');
+        const ip = await sha256(request.headers.get('cf-connecting-ip') || 'local');
+        const fam = await sha256(b.fam);
+        const limit = Number(env.CHAT_DAILY_LIMIT || 20);
+        const keys = isNewUserTurn(b.messages)
+          ? [{ key: `c:${fam}`, limit }, { key: `ci:${ip}`, limit: limit * 6 }]
+          : [{ key: `cs:${ip}`, limit: limit * 30 }]; // tool steps: generous, but bounded
+        const usage = await community.consume(keys);
+        if (!usage.ok) return json({ error: `You've sent today's ${limit} chat messages. Everything else in the app still works, and chat is back tomorrow.` }, 429);
+        try {
+          const step = await chatStep(env, b.messages);
+          return json({ ...step, remaining: isNewUserTurn(b.messages) ? usage.remaining : undefined });
+        } catch (err) {
+          if (isNewUserTurn(b.messages)) await community.refund(keys.map((k) => k.key));
+          if (err instanceof AIError) return bad(err.message, err.status);
+          throw err;
+        }
+      }
+
+      // Fetch a school's published calendar feed (.ics) for the app.
+      if (url.pathname === '/api/school-feed' && request.method === 'GET') {
+        const ip = await sha256(request.headers.get('cf-connecting-ip') || 'local');
+        const usage = await community.consume([{ key: `s:${ip}`, limit: Number(env.SCHOOL_FEED_DAILY_LIMIT || 60) }]);
+        if (!usage.ok) return bad('Too many calendar refreshes today. Try again tomorrow.', 429);
+        try {
+          const text = await fetchICS(url.searchParams.get('url'));
+          return new Response(text, { headers: { 'content-type': 'text/calendar; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; sandbox" } });
+        } catch (err) {
+          if (err instanceof AIError) return bad(err.message, err.status);
+          throw err;
+        }
+      }
+
+      // Read school dates off a photo of a newsletter or printed calendar.
+      if (url.pathname === '/api/school-photo' && request.method === 'POST') {
+        if (!env.ANTHROPIC_API_KEY) return bad('Reading photos needs AI, which is not enabled on this server.', 503);
+        let b;
+        try { b = await readJSON(request, 3_000_000); } catch (e) { return bad(e instanceof RangeError ? 'That photo is too large.' : 'invalid request', 413); }
+        const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(typeof b.image === 'string' ? b.image : '');
+        if (!famOk(b.fam) || !m) return bad('invalid request');
+        const today = /^\d{4}-\d{2}-\d{2}$/.test(b.today || '') ? b.today : new Date().toISOString().slice(0, 10);
+        const ip = await sha256(request.headers.get('cf-connecting-ip') || 'local');
+        const limit = Number(env.AI_DAILY_LIMIT || 5);
+        const keys = [{ key: `p:${await sha256(b.fam)}`, limit }, { key: `pi:${ip}`, limit: limit * 6 }];
+        const usage = await community.consume(keys);
+        if (!usage.ok) return json({ error: `You've read today's ${limit} photos. Try again tomorrow, or paste the school's calendar link instead.` }, 429);
+        try {
+          const out = await datesFromPhoto(env, { image: m[2], mediaType: m[1], today, school: typeof b.school === 'string' ? b.school.slice(0, 80) : '' });
+          return json({ ...out, remaining: usage.remaining });
+        } catch (err) {
+          await community.refund(keys.map((k) => k.key));
           if (err instanceof AIError) return bad(err.message, err.status);
           throw err;
         }

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ACTIVITIES, CATEGORIES } from '../js/data.js';
-import { recommend, score, weatherBucket, currentSeason, haversineKm, weekendDays, bookedFor, freeWindows, fillWeekend, swapPick, classKind } from '../js/planner.js';
+import { recommend, score, weatherBucket, currentSeason, haversineKm, weekendDays, weekDays, classDays, bookedFor, freeWindows, fillWeekend, swapPick, classKind } from '../js/planner.js';
 import { buildQuery, parsePlaces, PLACE_TYPES } from '../js/near.js';
 
 test('activity library is well-formed', () => {
@@ -59,6 +59,29 @@ const classes = [
   { id: 'b', title: 'Birthday party', kid: '', day: 'sat', start: '14:00', end: '16:00', repeat: 'once', date: '2026-10-10' },
   { id: 'c', title: 'Ballet', kid: '1', day: 'sun', start: '10:00', end: '11:00', repeat: 'weekly', skip: { '2026-10-11': true } },
 ];
+
+test('weekDays: Monday–Sunday around the weekend, with past/today flags', () => {
+  const w = weekDays(new Date(2026, 9, 7)); // Wednesday
+  assert.deepEqual(w.map((d) => d.key), ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']);
+  assert.deepEqual(w.map((d) => d.date), ['2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09', '2026-10-10', '2026-10-11']);
+  assert.deepEqual(w.map((d) => (d.past ? 'p' : d.today ? 't' : '-')).join(''), 'ppt----');
+  assert.equal(weekDays(new Date(2026, 9, 11))[0].date, '2026-10-05', 'Sunday belongs to the week that started Monday');
+  assert.equal(weekDays(new Date(2026, 9, 11), 1)[0].date, '2026-10-12');
+});
+
+test('weekday classes on several days; old single-day saves still work', () => {
+  const week = weekDays(new Date(2026, 9, 7));
+  const list = [
+    { id: 'f', title: 'Football', days: ['tue', 'thu'], start: '16:00', end: '17:00', repeat: 'weekly' },
+    { id: 'old', title: 'Swimming', day: 'sat', start: '09:00', end: '10:00', repeat: 'weekly' },
+    { id: 'o', title: 'Dentist', days: ['fri'], start: '15:00', end: '15:30', repeat: 'once', date: '2026-10-09' },
+  ];
+  const on = (key) => bookedFor(list, week.find((d) => d.key === key)).map((c) => c.id);
+  assert.deepEqual([on('mon'), on('tue'), on('thu'), on('fri'), on('sat')], [[], ['f'], ['f'], ['o'], ['old']]);
+  assert.deepEqual(classDays({ day: 'sun' }), ['sun']);
+  // Weekday classes never take weekend free time.
+  assert.equal(freeWindows(bookedFor(list, week[6]), 'sun').length, 2);
+});
 
 test('classes: weekly, one-off and skipped weeks', () => {
   const [sat, sun] = weekendDays(new Date(2026, 9, 7));
@@ -148,4 +171,36 @@ test('location is coarsened to a grid cell; neighbours cover edges', () => {
   assert.ok(neighbourCells(c).includes('953:-2446'));
   assert.ok(!isValidCell('47.6,-122.3'));
   assert.deepEqual(bandsForAges([2, 3, 5, 11]), ['0-3', '4-5', '9-12']);
+});
+
+test('saved data is loaded safely (old, partial and corrupted saves)', async () => {
+  const saved = { family: { name: 'Mathur', kids: [{ name: 'Mia', birthYear: 2021 }, 'junk'] }, classes: [{ id: 'a', title: 'Ballet', day: 'sat', start: '10:00', end: '11:00', kid: 0 }, { id: 'b', title: 'Bad', days: ['sat'], start: '25:00', end: '11:00' }], schools: [{ name: 'Grand Ridge', kid: 1, events: [{ date: '2026-10-09', title: 'No School', end: 'bad' }, { date: 'x', title: 'y' }] }], weekends: { '2026-10-10': { picks: {} }, bad: 5 }, memories: {}, favs: 'a', plusInterest: true };
+  const store = { data: JSON.stringify(saved), getItem() { return this.data; }, setItem(k, v) { this.data = v; }, removeItem() {} };
+  globalThis.localStorage = store;
+  const m = await import('../js/store.js?load-test');
+  const s = m.get();
+  assert.equal(s.family.name, 'Mathur', 'real data must survive loading');
+  assert.equal(s.family.kids.length, 1);
+  assert.deepEqual(s.classes.map((c) => [c.id, c.kid]), [['a', '0']], 'old single-day class kept, impossible time dropped');
+  assert.deepEqual(s.schools[0].events, [{ date: '2026-10-09', title: 'No School', end: '2026-10-09' }]);
+  assert.equal(s.schools[0].kid, '1');
+  assert.deepEqual(Object.keys(s.weekends), ['2026-10-10']);
+  assert.deepEqual([s.memories, s.favs, s.plusInterest], [[], [], true]);
+  for (const bad of [null, 5, 'x', [], { family: null, classes: null, schools: null }]) {
+    const d = m.sanitize(bad);
+    assert.ok(Array.isArray(d.family.kids) && Array.isArray(d.classes) && Array.isArray(d.schools) && Array.isArray(d.memories));
+  }
+  // A corrupted save loads defaults instead of crashing.
+  store.data = '{not json';
+  const m2 = await import('../js/store.js?corrupt-test');
+  assert.deepEqual(m2.get().family, { name: '', kids: [] });
+  assert.throws(() => m2.importJSON('{"family":{}}'), /Not a LittleRoam backup/);
+});
+
+test('map websites: only plain web links are shown', async () => {
+  const { safeWebsite } = await import('../js/near.js');
+  assert.equal(safeWebsite('https://pool.example.org/lessons'), 'https://pool.example.org/lessons');
+  assert.equal(safeWebsite('www.pool.example.org'), 'https://www.pool.example.org/');
+  assert.equal(safeWebsite('https://a.org; https://b.org'), 'https://a.org/');
+  for (const bad of ['javascript:alert(1)', 'JAVASCRIPT:alert(1)', 'data:text/html,<b>x</b>', 'vbscript:x', 'mailto:a@b.c', 'localhost', '', null, 5]) assert.equal(safeWebsite(bad), null, String(bad));
 });

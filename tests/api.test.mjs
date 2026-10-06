@@ -31,11 +31,17 @@ try {
   await waitUp();
   const health = await (await fetch(BASE + '/api/health')).json();
   assert.equal(health.ai, true);
+  assert.equal(health.chat, true);
 
   // The app itself is served too.
   const home = await fetch(BASE + '/');
   assert.equal(home.status, 200);
   assert.match(await home.text(), /LittleRoam/);
+  // Security headers on the app and the API.
+  assert.match(home.headers.get('content-security-policy') || '', /default-src 'self'; script-src 'self'/, 'CSP served from _headers');
+  assert.equal(home.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(home.headers.get('x-frame-options'), 'DENY');
+  assert.equal((await fetch(BASE + '/api/health')).headers.get('x-content-type-options'), 'nosniff');
 
   // --- Community: k-anonymity threshold ---
   const cell = '953:-2447';
@@ -122,6 +128,72 @@ try {
   assert.match((await r.json()).error, /free AI plans/);
   // A different family still has quota.
   assert.equal((await post('/api/ai', { ...aiBody, fam: 'family-zzzz9' })).status, 200);
+
+  // --- Chat ---
+  const chatPost = (body) => post('/api/chat', body);
+  assert.equal((await chatPost({ fam: 'family-chat1', messages: [] })).status, 400, 'empty conversation');
+  assert.equal((await chatPost({ fam: 'family-chat1', messages: [{ role: 'assistant', content: 'hi' }] })).status, 400, 'must start with user');
+  assert.equal((await chatPost({ fam: 'family-chat1', messages: [{ role: 'system', content: 'x' }] })).status, 400, 'no system role from clients');
+  assert.equal((await chatPost({ fam: 'bad', messages: [{ role: 'user', content: 'hi' }] })).status, 400, 'family id required');
+  let cr = await chatPost({ fam: 'family-chat1', messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }] });
+  assert.equal(cr.status, 200);
+  let cj = await cr.json();
+  assert.equal(cj.stop_reason, 'end_turn');
+  assert.equal(cj.content[0].type, 'text');
+  const creq = mock.requests.at(-1);
+  assert.ok(creq.body.tools.some((t) => t.type === 'web_search_20260209'), 'web search enabled');
+  assert.match(creq.body.system[0].text, /weekend assistant/);
+  assert.equal(creq.body.output_config.effort, 'medium');
+  // Tool-result steps don't use up the daily message allowance.
+  const before = cj.remaining;
+  cr = await chatPost({ fam: 'family-chat1', messages: [
+    { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_x', name: 'clear_slot', input: { week: 'this', slot_id: 'sat@10:15' } }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_x', content: '{"ok":true}' }] },
+  ] });
+  assert.equal(cr.status, 200);
+  cr = await chatPost({ fam: 'family-chat1', messages: [{ role: 'user', content: [{ type: 'text', text: 'again' }] }] });
+  assert.equal((await cr.json()).remaining, before - 1, 'only new user messages are counted');
+  // Oversized conversations are refused with a clear message.
+  cr = await chatPost({ fam: 'family-chat1', messages: [{ role: 'user', content: 'x'.repeat(500000) }] });
+  assert.equal(cr.status, 413);
+  assert.match((await cr.json()).error, /too long/);
+
+  // --- School calendars ---
+  assert.equal(health.schoolFeeds, true);
+  assert.equal(health.schoolPhoto, true);
+  for (const bad of ['', 'not a link', 'http://localhost:8787/api/health', 'https://127.0.0.1/x.ics', 'https://10.1.2.3/x.ics', 'file:///etc/passwd', 'https://intranet/feed.ics']) {
+    const res = await fetch(`${BASE}/api/school-feed?url=${encodeURIComponent(bad)}`);
+    assert.equal(res.status, 400, `should refuse ${bad}`);
+    assert.match((await res.json()).error, /calendar link/);
+  }
+  // A real host we can't reach from the test sandbox → a clear 502, not a crash.
+  const unreachable = await fetch(`${BASE}/api/school-feed?url=${encodeURIComponent('webcal://calendar.grandridge.invalid/feed.ics')}`);
+  assert.equal(unreachable.status, 502);
+  assert.match((await unreachable.json()).error, /Couldn't reach that calendar/);
+
+  const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  assert.equal((await post('/api/school-photo', { fam: 'family-photo1', image: 'data:text/html;base64,PGgxPg==' })).status, 400, 'only images');
+  assert.equal((await post('/api/school-photo', { fam: 'x', image: PNG })).status, 400, 'family id required');
+  let pr = await post('/api/school-photo', { fam: 'family-photo1', image: PNG, today: '2026-10-07', school: 'Synergy Learning Academy' });
+  assert.equal(pr.status, 200, await pr.clone().text());
+  const pj = await pr.json();
+  assert.deepEqual(pj.events.map((e) => [e.date, e.kind]), [['2026-10-16', 'off'], ['2026-10-21', 'early'], ['2026-10-30', 'event']], 'impossible date dropped');
+  assert.match(pj.note, /October newsletter/);
+  const preq = mock.requests.at(-1).body;
+  const blocks = preq.messages[0].content;
+  assert.equal(blocks[0].type, 'image');
+  assert.equal(blocks[0].source.media_type, 'image/png');
+  assert.match(blocks[1].text, /TODAY: 2026-10-07/);
+  assert.match(blocks[1].text, /SCHOOL: Synergy Learning Academy/);
+  assert.equal(preq.output_config.format.type, 'json_schema');
+  assert.equal(preq.model, 'claude-opus-5-5');
+  // Photo reads share the daily AI limit (3 in this test).
+  assert.equal((await post('/api/school-photo', { fam: 'family-photo1', image: PNG })).status, 200);
+  assert.equal((await post('/api/school-photo', { fam: 'family-photo1', image: PNG })).status, 200);
+  pr = await post('/api/school-photo', { fam: 'family-photo1', image: PNG });
+  assert.equal(pr.status, 429);
+  assert.match((await pr.json()).error, /paste the school's calendar link/);
 
   console.log('API TESTS PASSED');
 } catch (e) {

@@ -4,12 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:site": "cd .. && rm -rf _site && mkdir _site && cp -r index.html manifest.webmanifest sw.js css js icons _site/",
+    "build:site": "cd .. && rm -rf _site && mkdir _site && cp -r index.html manifest.webmanifest sw.js _headers css js icons _site/",
     "dev": "npm run build:site && wrangler dev",
     "deploy": "npm run build:site && wrangler deploy"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.131.0"
+    "@anthropic-ai/sdk": "^0.131.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "wrangler": "^4.147.0"

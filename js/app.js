@@ -1,9 +1,10 @@
 import { ACTIVITIES, CATEGORIES, SEASONS } from './data.js';
-import { currentSeason, ageFromBirthYear, weatherBucket, weatherLabel, fitsAges, VIBES, weekendDays, bookedFor, freeWindows, fillWeekend, swapPick, classKind, toMin } from './planner.js';
-import { PLACE_TYPES, findPlaces, geocode, getForecast, getPosition, directionsUrl, osmUrl } from './near.js';
+import { currentSeason, ageFromBirthYear, weatherBucket, weatherLabel, fitsAges, VIBES, audienceOf, recommend, weekDays, DAY_KEYS, DAY_NAMES, classDays, bookedFor, freeWindows, fillWeekend, swapPick, classKind, toMin } from './planner.js';
+import { PLACE_TYPES, CLASS_TYPES, findPlaces, geocode, getForecast, getPosition, directionsUrl, osmUrl } from './near.js';
 import * as store from './store.js';
 import * as api from './api.js';
 import { cellFor, bandsForAges, bandLabel } from './community.js';
+import { parseICS, normaliseFeedUrl, schoolEventsBetween, nextDayOff, addDays } from './school.js';
 
 // Optional: set to a Tally/Google Form/Stripe link to collect Plus early-access sign-ups.
 const WAITLIST_URL = '';
@@ -32,24 +33,27 @@ function toast(msg) {
 }
 
 // ---------------- Routing ----------------
-const VIEWS = ['weekend', 'near', 'ideas', 'memories'];
+const VIEWS = ['home', 'weekend', 'chat', 'near', 'ideas', 'memories', 'discover', 'profile'];
+// Which bottom tab each screen belongs to.
+const TAB_OF = { home: 'plan', weekend: 'plan', chat: 'plan', near: 'plan', ideas: 'plan', discover: 'discover', profile: 'profile', memories: 'profile' };
 
 function route() {
-  const hash = location.hash.slice(1) || 'weekend';
+  const hash = location.hash.slice(1) || 'home';
   if (hash.startsWith('a/')) {
     const a = byId[hash.slice(2)];
-    if (!$('main').dataset.view) show('weekend');
+    if (!$('main').dataset.view) show('home');
     if (a) openActivity(a, { fromLink: true });
     return;
   }
-  show(VIEWS.includes(hash) ? hash : 'weekend');
+  show(VIEWS.includes(hash) ? hash : 'home');
 }
 
 function show(view) {
   closeSheet();
   $('main').dataset.view = view;
-  $$('.tab').forEach((t) => t.setAttribute('aria-current', t.dataset.view === view ? 'page' : 'false'));
-  const render = { weekend: renderWeekend, near: renderNear, ideas: renderIdeas, memories: renderMemories }[view];
+  document.body.dataset.view = view;
+  $$('.tabbar .tab').forEach((t) => (t.dataset.tab === TAB_OF[view] ? t.setAttribute('aria-current', 'page') : t.removeAttribute('aria-current')));
+  const render = VIEW_RENDER[view];
   render($('#view'));
   $('#view').focus({ preventScroll: true });
   window.scrollTo(0, 0);
@@ -59,59 +63,88 @@ function show(view) {
 function openSheet(html, onMount) {
   const sheet = $('#sheet');
   $('#sheet-body').innerHTML = html;
+  // Name the dialog after its heading, for screen readers.
+  const h = $('#sheet-body h2');
+  if (h) { h.id = 'sheet-title'; $('.sheet-panel').setAttribute('aria-labelledby', 'sheet-title'); } else $('.sheet-panel').setAttribute('aria-label', 'Details');
+  if (sheet.hidden) openSheet.returnTo = document.activeElement;
   sheet.hidden = false;
   requestAnimationFrame(() => sheet.classList.add('open'));
   onMount?.($('#sheet-body'));
+  // Keyboard and screen-reader users land in the sheet, on its heading.
+  const title = $('#sheet-title');
+  if (title) { title.tabIndex = -1; title.focus({ preventScroll: true }); } else $('.sheet-close').focus({ preventScroll: true });
 }
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+// Keep Tab inside an open sheet.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Tab' || $('#sheet').hidden) return;
+  const items = $$(FOCUSABLE, $('.sheet-panel')).filter((x) => x.offsetParent !== null || x === document.activeElement);
+  if (!items.length) return;
+  const first = items[0], last = items.at(-1);
+  if (!$('.sheet-panel').contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+  else if (e.shiftKey && (document.activeElement === first || document.activeElement.id === 'sheet-title')) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+});
 function closeSheet() {
   const sheet = $('#sheet');
   if (sheet.hidden) return;
   sheet.classList.remove('open');
   sheet.hidden = true;
-  if (location.hash.startsWith('#a/')) history.replaceState(null, '', '#' + ($('main').dataset.view || 'weekend'));
+  const back = openSheet.returnTo;
+  openSheet.returnTo = null;
+  if (back?.isConnected) back.focus({ preventScroll: true });
+  if (location.hash.startsWith('#a/')) history.replaceState(null, '', '#' + ($('main').dataset.view || 'home'));
 }
-const rerender = () => { const v = $('main').dataset.view; if (v) ({ weekend: renderWeekend, near: renderNear, ideas: renderIdeas, memories: renderMemories })[v]($('#view')); };
+const VIEW_RENDER = { home: (r) => renderHome(r), weekend: (r) => renderWeekend(r), chat: (r) => renderChat(r), near: (r) => renderNear(r), ideas: (r) => renderIdeas(r), memories: (r) => renderMemories(r), discover: (r) => renderDiscover(r), profile: (r) => renderProfile(r) };
+const rerender = () => { const v = $('main').dataset.view; if (v) VIEW_RENDER[v]($('#view')); };
 
 // ---------------- Activity card & detail ----------------
 function card(a, { compact = false, why = '', place = '' } = {}) {
   const fav = S().favs.includes(a.id);
-  return `<article class="card act" data-id="${a.id}">
-    <button class="act-main" data-open="${a.id}" aria-label="Open ${esc(a.title)}">
+  return `<article class="card act" data-id="${a.id}" data-cat="${a.cat}">
+    <button class="act-main" data-open="${a.id}">
       <span class="act-emoji" aria-hidden="true">${esc(a.emoji)}</span>
       <span class="act-text">
-        <strong>${esc(a.title)}${a.ai ? ' <span class="chip sm ai">✨ AI idea</span>' : ''}</strong>
-        <span class="meta">${CATEGORIES[a.cat].emoji} ${CATEGORIES[a.cat].label} · ${fmtMins(a.mins)} · ${settingLabel[a.setting]} · ages ${a.ages[0]}–${a.ages[1]}</span>
+        <strong>${esc(a.title)}${a.ai ? ' <span class="chip sm ai">AI</span>' : ''}</strong>
+        <span class="meta">${fmtMins(a.mins)} · ${settingLabel[a.setting]} · ages ${a.ages[0]}–${a.ages[1]}</span>
         ${why || place ? `<span class="why">${[why && esc(why), place && `📍 ${esc(place)}`].filter(Boolean).join(' · ')}</span>` : ''}
-        ${compact ? '' : `<span class="skills">${a.skills.map((s) => `<span class="chip sm">${esc(s)}</span>`).join('')}</span>`}
       </span>
     </button>
     <button class="icon-btn fav ${fav ? 'on' : ''}" data-fav="${a.id}" aria-pressed="${fav}" aria-label="Save ${esc(a.title)}">${fav ? '♥' : '♡'}</button>
   </article>`;
 }
 
-function openActivity(a, { fromLink = false } = {}) {
+function openActivity(a, { fromLink = false, slot = null } = {}) {
   if (!fromLink) history.replaceState(null, '', '#a/' + a.id);
   openSheet(`
     <div class="detail">
       <div class="detail-head"><span class="big-emoji">${esc(a.emoji)}</span>
         <div><h2>${esc(a.title)}</h2>
-        <p class="meta">${CATEGORIES[a.cat].emoji} ${CATEGORIES[a.cat].label} · ${fmtMins(a.mins)} · ${settingLabel[a.setting]} · ages ${a.ages[0]}–${a.ages[1]} · ${['No mess', 'A little mess', 'Messy!'][a.mess]}</p></div>
+        <p class="meta">${fmtMins(a.mins)} · ${settingLabel[a.setting]} · ages ${a.ages[0]}–${a.ages[1]}${a.mess === 2 ? ' · messy' : ''}</p></div>
       </div>
       <h3>You'll need</h3><ul class="list">${a.materials.map((m) => `<li>${esc(m)}</li>`).join('')}</ul>
       <h3>How to</h3><ol class="list steps">${a.steps.map((m) => `<li>${esc(m)}</li>`).join('')}</ol>
-      <h3>What they're learning</h3><p>${a.skills.map((s) => `<span class="chip">${esc(s)}</span>`).join(' ')}</p>
+      <p class="meta">Good for: ${a.skills.map(esc).join(', ')}</p>
       ${a.tip ? `<p class="tip">💡 ${esc(a.tip)}</p>` : ''}
       ${a.ai ? '<p class="fine">✨ This idea was written by AI for your family. Read it through first and use your own judgement on safety.</p>' : ''}
       <div class="row wrap gap">
-        <button class="btn primary" data-act="plan">🗓️ Add to our weekend</button>
-        <button class="btn" data-act="done">✅ We did it</button>
-        <button class="btn ghost" data-act="share">↗ Share</button>
+        ${slot ? `<button class="btn primary" data-act="done">✅ We did it</button>
+          <button class="btn" data-act="swap">🔄 Swap</button>
+          <button class="btn ghost danger" data-act="remove">Remove</button>`
+        : `<button class="btn primary" data-act="plan">🗓️ Add to our weekend</button>
+          <button class="btn" data-act="done">✅ We did it</button>
+          <button class="btn ghost" data-act="share">↗ Share</button>`}
       </div>
     </div>`,
   (el) => {
-    $('[data-act=done]', el).onclick = () => memoryForm({ activityId: a.id, title: a.title });
-    $('[data-act=plan]', el).onclick = () => addToWeekend(a);
-    $('[data-act=share]', el).onclick = () => share(a);
+    $('[data-act=done]', el).onclick = () => memoryForm({ activityId: a.id, title: a.title, date: slot?.date, onSaved: slot ? () => store.set((st) => (st.weekends[slot.key].done[slot.winId] = true)) : null });
+    if (slot) {
+      $('[data-act=swap]', el).onclick = () => { closeSheet(); swap(slot.winId); };
+      $('[data-act=remove]', el).onclick = () => { store.set((st) => delete st.weekends[slot.key].picks[slot.winId]); closeSheet(); renderWeekend($('#view')); };
+    } else {
+      $('[data-act=plan]', el).onclick = () => addToWeekend(a);
+      $('[data-act=share]', el).onclick = () => share(a);
+    }
   });
 }
 
@@ -141,111 +174,564 @@ document.addEventListener('click', (e) => {
   if (e.target.closest('[data-close]')) closeSheet();
 });
 
+// ======================= Home: Family | Kids =======================
+const home = { tab: 'family', kid: 'all', time: 'any', where: 'any', seed: 0 };
+const TIME_CHIPS = { any: 'Any time', 30: '≤ 30 min', 60: '≤ 1 hour', 180: 'Half day' };
+const WHERE_CHIPS = { family: { any: 'Anywhere', out: 'Out & about', home: 'At home' }, kids: { any: 'Anywhere', home: 'Indoors', outside: 'Outdoors' } };
+const HOME_PLACES = ['park', 'playground', 'nature', 'museum', 'library', 'animals', 'market'];
+const daySeed = () => Number(store.isoDate().replaceAll('-', ''));
+
+function homePicks() {
+  const ages = home.tab === 'kids' && home.kid !== 'all' ? [kidAges()[Number(home.kid)]].filter((a) => a != null) : kidAges();
+  const today = forecast[store.isoDate()];
+  const ctx = {
+    ages,
+    maxMins: home.time === 'any' ? 600 : Number(home.time),
+    place: home.where,
+    weather: today ? (['wet', 'snow'].includes(weatherBucket(today.code)) || today.rain >= 60 ? 'wet' : 'dry') : null,
+    recentIds: [],
+    favIds: S().favs,
+  };
+  const pool = ACTIVITIES.filter((a) => audienceOf(a) === home.tab);
+  return recommend(ctx, { count: 5, seed: daySeed() + home.seed, pool });
+}
+
+const LOGO = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21V11"/><path d="M12 14c-4 0-6-3-6-7 4 0 6 3 6 7z"/><path d="M12 12c0-4 2-6 6-6 0 4-2 6-6 6z"/></svg>';
+const CHEVRON = '<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
+const kidLabel = (k, i) => `${k.name || `Child ${i + 1}`} (${ageFromBirthYear(k.birthYear)})`;
+
+// "No school Fri 9 Oct (Grand Ridge)" when a linked school has a weekday off soon.
+function dayOffNotice() {
+  const off = nextDayOff(S().schools, store.isoDate(), 14);
+  if (!off) return '';
+  const who = kidName(off.kid);
+  return `<a class="notice" href="#discover" id="day-off"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2.5"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>
+    <span>${off.kind === 'early' ? 'Early release' : 'No school'} ${fmtDate(off.firstWeekday, { weekday: 'short', day: 'numeric', month: 'short' })}${who ? ` for ${esc(who)}` : ''} · ${esc(off.school)}. <b>Ideas for a free day ›</b></span></a>`;
+}
+
+function renderHome(root) {
+  const s = S();
+  const kids = s.family.kids;
+  const { days, weekdays, plan } = weekendModel(0);
+  const today = forecast[store.isoDate()];
+  const booked = [...weekdays, ...days].flatMap((d) => d.booked.map((c) => ({ ...c, d })));
+  const upcoming = booked.filter((c) => !c.d.past);
+  const planned = plan ? Object.keys(plan.picks).length : 0;
+  const wkBooked = days.filter((d) => !d.past).reduce((n, d) => n + d.booked.length, 0);
+  const picks = homePicks();
+  const hello = s.family.name ? `Hi, ${esc(s.family.name)} family` : 'Hi there';
+  const weekSchool = schoolEventsBetween(s.schools, store.isoDate(), weekdays.concat(days).at(-1).date);
+  const first = days.find((d) => !d.past) || days[0];
+  root.innerHTML = `
+    <header class="app-head"><span class="logo">${LOGO}</span><span class="brand-name">LittleRoam</span></header>
+    <section class="home-head">
+      <div><p class="eyebrow">${fmtDate(store.isoDate(), { weekday: 'long', day: 'numeric', month: 'long' })}</p><h1>${hello}</h1></div>
+      ${today ? `<span class="wx-pill">${weatherIcon(today.code)} ${Math.round(today.max)}°</span>` : ''}
+    </section>
+
+    <form id="ask" class="ask-bar" role="search">
+      <svg class="spark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.6L18 9l-4.2 1.4L12 15l-1.8-4.6L6 9l4.2-1.4z"/><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg>
+      <input id="ask-q" class="grow" maxlength="400" autocomplete="off" placeholder="${api.chatEnabled() ? 'Ask anything — rainy Sunday ideas…' : 'Search ideas, e.g. baking'}" aria-label="Ask LittleRoam" />
+      <button class="ask-go" aria-label="${api.chatEnabled() ? 'Ask' : 'Search'}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg></button>
+    </form>
+    ${dayOffNotice()}
+
+    <div class="seg two home-seg" role="tablist">
+      <button role="tab" data-htab="family" class="${home.tab === 'family' ? 'on' : ''}" aria-selected="${home.tab === 'family'}">Family</button>
+      <button role="tab" data-htab="kids" class="${home.tab === 'kids' ? 'on' : ''}" aria-selected="${home.tab === 'kids'}">Kids</button>
+    </div>
+
+    ${home.tab === 'family' ? `
+      <a class="feature" href="#weekend">
+        <span class="date-tile"><small>${fmtDate(first.date, { weekday: 'short' }).toUpperCase()}</small><b>${fmtDate(first.date, { day: 'numeric' })}</b></span>
+        <span class="feature-text"><b>Plan the weekend</b><span>${fmtDate(days[0].date, { day: 'numeric', month: 'short' })} – ${fmtDate(days[1].date, { day: 'numeric', month: 'short' })}${wkBooked ? ` · ${wkBooked} booked` : ''}${planned ? ` · ${planned} planned` : ''}</span></span>
+        ${CHEVRON}</a>
+      <div class="sec-head"><h2 class="h">Things to do together</h2><a class="see-all" href="#ideas" id="see-all" aria-label="See all family ideas">See all</a></div>`
+    : `${kids.length > 1 ? `<div class="chips-scroll">${[['all', 'All kids'], ...kids.map((k, i) => [String(i), kidLabel(k, i)])].map(([k, l]) => `<button class="chip-btn ${home.kid === k ? 'on' : ''}" data-hkid="${k}">${esc(l)}</button>`).join('')}</div>` : ''}
+      <div class="sec-head"><h2 class="h">Play ideas</h2><a class="see-all" href="#ideas" id="see-all" aria-label="See all kids ideas">See all</a></div>`}
+
+    <div class="filters">
+      <select class="input sm" id="h-time" aria-label="How long">${Object.entries(TIME_CHIPS).map(([k, l]) => `<option value="${k}" ${home.time === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <select class="input sm" id="h-where" aria-label="Where">${Object.entries(WHERE_CHIPS[home.tab]).map(([k, l]) => `<option value="${k}" ${home.where === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <button class="icon-btn shuffle" id="h-shuffle" aria-label="Show other ideas" title="Show other ideas"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h11l-3-3M20 17H9l3 3"/></svg></button>
+    </div>
+    <section class="home-list">${picks.length ? picks.map((a) => card(a, { compact: true })).join('') : '<p class="empty">Nothing fits those filters. Try “Any time”.</p>'}</section>
+
+    ${home.tab === 'family' ? `
+      <h2 class="h">Places near us</h2>
+      ${s.location ? `<div class="place-grid">${HOME_PLACES.slice(0, 6).map((k) => `<a class="place-tile" href="#near" data-ptype="${k}"><span aria-hidden="true">${PLACE_TYPES[k].emoji}</span>${PLACE_TYPES[k].label}</a>`).join('')}</div>`
+        : `<a class="row-btn card" href="#near"><span><b>Set your area</b><span class="meta">for nearby places and weather</span></span>${CHEVRON}</a>`}
+      <section id="popular"></section>`
+    : `
+      <div class="sec-head"><h2 class="h">Classes this week</h2><button class="fab sm" id="h-add-class" aria-label="Add a class" title="Add a class">+</button></div>
+      ${upcoming.length ? `<div class="card class-list">${upcoming.slice(0, 5).map((c) => `<button class="cls-row" data-hclass="${c.id}|${c.d.date}"><span>${esc(classKind(c.title).emoji)} ${esc(c.title)}<span class="meta">${[c.d.today ? 'Today' : c.d.name.slice(0, 3), kidName(c.kid)].filter(Boolean).map(esc).join(' · ')}</span></span><span class="meta">${esc(c.start)}</span></button>`).join('')}
+        ${upcoming.length > 5 ? `<button class="link sm" id="h-all-classes">See all ${upcoming.length} ›</button>` : ''}</div>`
+        : `<p class="meta">No classes yet. Tap + to add swimming, football, ballet…</p>`}
+      <button class="link find-link" id="h-find">Find classes nearby ›</button>
+      ${weekSchool.length ? `<h2 class="h">School this week</h2><div class="card class-list school-list">${weekSchool.slice(0, 6).map((e) => `<div class="cls-row"><span>${e.kind === 'off' ? '🏖️' : e.kind === 'early' ? '⏰' : '🏫'} ${esc(e.title)}<span class="meta">${[esc(e.school), kidName(e.kid) && esc(kidName(e.kid))].filter(Boolean).join(' · ')}</span></span><span class="meta">${fmtDate(e.date < store.isoDate() ? store.isoDate() : e.date, { weekday: 'short' })}${e.start ? ` ${esc(e.start)}` : ''}</span></div>`).join('')}</div>`
+        : s.schools.length ? '' : `<a class="link find-link" href="#profile">Link the kids' school calendars ›</a>`}`}`;
+
+  $('#ask', root).onsubmit = (e) => {
+    e.preventDefault();
+    const q = $('#ask-q', root).value.trim();
+    if (!q) return;
+    if (api.chatEnabled()) { location.hash = 'chat'; setTimeout(() => sendChat(q)); }
+    else { Object.assign(ideaFilter, { q, cat: 'all', aud: 'all', setting: 'all' }); location.hash = 'ideas'; }
+  };
+  $$('[data-htab]', root).forEach((b) => (b.onclick = () => { home.tab = b.dataset.htab; home.where = 'any'; home.seed = 0; renderHome(root); }));
+  $$('[data-hkid]', root).forEach((b) => (b.onclick = () => { home.kid = b.dataset.hkid; renderHome(root); }));
+  $('#h-time', root).onchange = (e) => { home.time = e.target.value; renderHome(root); };
+  $('#h-where', root).onchange = (e) => { home.where = e.target.value; renderHome(root); };
+  $('#h-shuffle', root).onclick = () => { home.seed += 17; renderHome(root); };
+  $('#see-all', root).onclick = () => Object.assign(ideaFilter, { aud: home.tab, cat: 'all', q: '' });
+  $('#day-off', root)?.addEventListener('click', () => (discover.filter = 'free'));
+  $$('[data-ptype]', root).forEach((a) => (a.onclick = () => { nearState.type = a.dataset.ptype; nearState.places = null; }));
+  $('#h-add-class', root)?.addEventListener('click', () => classForm());
+  $('#h-find', root)?.addEventListener('click', classFinder);
+  $('#h-all-classes', root)?.addEventListener('click', classesSheet);
+  $$('[data-hclass]', root).forEach((b) => (b.onclick = () => {
+    const [id, date] = b.dataset.hclass.split('|');
+    classForm(S().classes.find((c) => c.id === id), booked.find((c) => c.id === id && c.d.date === date)?.d);
+  }));
+  if (home.tab === 'family') renderPopular();
+}
+
+// ======================= Discover (feed) =======================
+const discover = { filter: 'foryou', seed: 0 };
+const DISCOVER_FILTERS = { foryou: 'For you', weekend: 'This weekend', rainy: 'Rainy day', free: 'Free days' };
+const audLabel = (a) => (audienceOf(a) === 'family' ? 'Family' : 'Kids');
+
+function discoverPicks() {
+  const ctx = { ages: kidAges(), maxMins: 600, place: 'any', weather: null, recentIds: S().recent, favIds: S().favs };
+  const seed = daySeed() + discover.seed;
+  const wk = weekendModel(0).days.filter((d) => !d.past);
+  const pools = {
+    foryou: ACTIVITIES,
+    weekend: ACTIVITIES.filter((a) => a.setting !== 'home'),
+    rainy: ACTIVITIES.filter((a) => a.weather !== 'dry' && a.setting !== 'outside'),
+    free: ACTIVITIES.filter((a) => a.mins >= 60),
+  };
+  if (discover.filter === 'weekend') ctx.weather = wk.some((d) => d.weather === 'wet') ? 'wet' : wk.some((d) => d.weather) ? 'dry' : null;
+  if (discover.filter === 'rainy') ctx.weather = 'wet';
+  return recommend(ctx, { count: 12, seed, pool: pools[discover.filter] || ACTIVITIES });
+}
+
+function pin(a, i, { tag = '', why = '' } = {}) {
+  const fav = S().favs.includes(a.id);
+  return `<article class="pin" data-cat="${a.cat}" data-id="${a.id}">
+    <button class="pin-main" data-open="${a.id}">
+      <span class="pin-art h${i % 3}"><span class="pin-tag">${esc(tag || `${audLabel(a)} · ${settingLabel[a.setting]}`)}</span><span class="pin-emoji" aria-hidden="true">${esc(a.emoji)}</span></span>
+      <span class="pin-text"><strong>${esc(a.title)}</strong><span class="meta">${why ? esc(why) : `${fmtMins(a.mins)} · ages ${a.ages[0]}–${a.ages[1]}`}</span></span>
+    </button>
+    <button class="pin-fav fav ${fav ? 'on' : ''}" data-fav="${a.id}" aria-pressed="${fav}" aria-label="Save ${esc(a.title)}">${fav ? '♥' : '♡'}</button>
+  </article>`;
+}
+
+function renderDiscover(root) {
+  const s = S();
+  const kids = s.family.kids;
+  const where = s.location ? (s.location.label === 'Your location' ? 'near you' : s.location.label.split(',')[0]) : '';
+  const picks = discoverPicks();
+  const today = store.isoDate();
+  const daysOff = discover.filter === 'free' ? schoolEventsBetween(s.schools, today, addDays(today, 60)).filter((e) => e.kind !== 'event').slice(0, 4) : [];
+  root.innerHTML = `
+    <header class="page-head">
+      <p class="eyebrow">${kids.length ? `Picked for ${kids.map((k, i) => esc(kidLabel(k, i))).join(' and ')}` : 'Add your kids in Profile for better picks'}${where ? ` · ${esc(where)}` : ''}</p>
+      <h1>Discover</h1>
+    </header>
+    <div class="chips-scroll" role="tablist">${Object.entries(DISCOVER_FILTERS).map(([k, l]) => `<button role="tab" class="chip-btn ${discover.filter === k ? 'on' : ''}" aria-selected="${discover.filter === k}" data-dfilter="${k}">${l}</button>`).join('')}</div>
+    ${discover.filter === 'free'
+      ? (s.schools.length
+        ? (daysOff.length ? `<div class="card class-list">${daysOff.map((e) => `<div class="cls-row"><span>${e.kind === 'early' ? '⏰' : '🏖️'} ${esc(e.title)}<span class="meta">${esc(e.school)}${kidName(e.kid) ? ` · ${esc(kidName(e.kid))}` : ''}</span></span><span class="meta">${fmtDate(e.date)}${e.end !== e.date ? ` – ${fmtDate(e.end)}` : ''}</span></div>`).join('')}</div>` : '<p class="meta">No days off in the school calendars for the next 2 months.</p>')
+        : '<a class="notice" href="#profile"><span>Link the kids\' school calendars in Profile to see days off here. <b>Link a school ›</b></span></a>')
+      : dayOffNotice()}
+    <section class="pins" id="pins">${picks.length ? picks.map((a, i) => pin(a, i)).join('') : '<p class="empty">Nothing here yet. Try another filter.</p>'}</section>
+    <button class="btn ghost big" id="d-more">Show me different ideas</button>`;
+  $$('[data-dfilter]', root).forEach((b) => (b.onclick = () => { discover.filter = b.dataset.dfilter; discover.seed = 0; renderDiscover(root); }));
+  $('#d-more', root).onclick = () => { discover.seed += 31; renderDiscover(root); window.scrollTo(0, 0); };
+  if (discover.filter === 'foryou') popularPins();
+}
+
+// Real, anonymous "families near you did this" counts, shown first in the feed.
+async function popularPins() {
+  const loc = S().location;
+  const bands = bandsForAges(kidAges());
+  if (!api.communityEnabled() || !loc || !bands.length) return;
+  try {
+    const t = await api.getTrends(cellFor(loc), bands);
+    const el = $('#pins');
+    if (!el || discover.filter !== 'foryou') return;
+    const acts = t.activities.map((x) => ({ a: byId[x.activity], n: x.families })).filter((x) => x.a).slice(0, 2);
+    for (const { a, n } of acts.reverse()) {
+      el.querySelector(`.pin[data-id="${a.id}"]`)?.remove();
+      el.insertAdjacentHTML('afterbegin', pin(a, 0, { tag: 'Popular nearby', why: `${n} families near you did this` }));
+    }
+  } catch { /* the feed works without it */ }
+}
+
+// ======================= Profile =======================
+const initials = (name, i) => (name ? name.slice(0, 2) : `C${i + 1}`);
+const ago = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 2 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
+const schoolOf = (i) => S().schools.find((x) => x.kid === String(i));
+
+function schoolStatus(sc) {
+  const upcoming = sc.events.filter((e) => e.end >= store.isoDate()).length;
+  const how = sc.source === 'feed' ? `Calendar linked · updated ${ago(sc.updated)}` : sc.source === 'file' ? `Calendar file imported ${ago(sc.updated)}` : `Dates from a photo · ${ago(sc.updated)}`;
+  return `${how} · ${upcoming} upcoming date${upcoming === 1 ? '' : 's'}${sc.error ? ' · last refresh failed' : ''}`;
+}
+
+function renderProfile(root) {
+  const s = S();
+  const kids = s.family.kids;
+  const area = s.location ? (s.location.label === 'Your location' ? 'Your location' : s.location.label.split(',').slice(0, 2).join(',')) : '';
+  root.innerHTML = `
+    <header class="profile-head">
+      <span class="avatar" aria-hidden="true">${esc([...(s.family.name.trim() || '🌱')][0].toUpperCase())}</span>
+      <div class="grow"><h1>${s.family.name ? `${esc(s.family.name)} family` : 'Your family'}</h1>
+        <p class="meta">${[area && esc(area), kids.length ? `${kids.length} kid${kids.length > 1 ? 's' : ''}` : 'No kids added yet'].filter(Boolean).join(' · ')}</p></div>
+      <button class="btn sm" id="edit-family">Edit</button>
+    </header>
+
+    <h2 class="label">Kids &amp; schools</h2>
+    <div class="card list-card">
+      ${kids.length ? kids.map((k, i) => {
+        const sc = schoolOf(i);
+        return `<div class="kid-row">
+          <span class="kid-tile k${i % 4}" aria-hidden="true">${esc(initials(k.name, i))}</span>
+          <div class="grow"><p class="kid-name">${esc(k.name || `Child ${i + 1}`)} · ${ageFromBirthYear(k.birthYear)}</p>
+            <p class="meta">${sc ? esc(sc.name) : 'No school linked'}</p>
+            ${sc ? `<p class="ok-line ${sc.error ? 'warn' : ''}">${esc(schoolStatus(sc))}</p>` : ''}</div>
+          <button class="btn sm ${sc ? '' : 'primary'}" data-school="${i}">${sc ? 'Manage' : 'Link school'}</button>
+        </div>`;
+      }).join('') : '<div class="kid-row"><p class="grow meta">Add your kids (birth years only) to get ideas for their ages.</p><button class="btn sm primary" id="add-kids">Add kids</button></div>'}
+    </div>
+
+    <h2 class="label">Settings</h2>
+    <div class="card list-card settings-list">
+      <a class="set-row" href="#near"><span>Home area</span><span class="meta">${area ? esc(area) : 'Not set'} ›</span></a>
+      <label class="set-row"><span>Share anonymously with nearby families<small>Only the activity, age bands and a ~5 km area, when you save a memory</small></span>
+        <input type="checkbox" role="switch" class="switch" id="share-toggle" ${s.shareNearby ? 'checked' : ''} /></label>
+      <a class="set-row" href="#memories"><span>Past adventures</span><span class="meta">${s.memories.length} ›</span></a>
+      <button class="set-row" id="mcp-btn"><span>Use in Claude or ChatGPT</span><span class="meta">Connect ›</span></button>
+      <button class="set-row" id="data-btn"><span>Backup &amp; your data</span><span class="meta">›</span></button>
+    </div>
+    <button class="plus-card" id="plus-btn"><span><b>LittleRoam Plus</b><span>Unlimited Ask · shared family plan · calendar sync</span></span><span class="pill">Learn more</span></button>`;
+  $('#edit-family', root).onclick = settings;
+  $('#add-kids', root)?.addEventListener('click', settings);
+  $$('[data-school]', root).forEach((b) => (b.onclick = () => schoolSheet(Number(b.dataset.school))));
+  $('#share-toggle', root).onchange = (e) => { store.set((st) => (st.shareNearby = e.target.checked)); toast(e.target.checked ? 'Sharing anonymously when you save a memory' : 'Not sharing'); };
+  $('#mcp-btn', root).onclick = mcpSheet;
+  $('#data-btn', root).onclick = dataSheet;
+  $('#plus-btn', root).onclick = plus;
+}
+
+// ---------------- Link a school ----------------
+function saveSchool(i, v) {
+  store.set((s) => {
+    s.schools = s.schools.filter((x) => x.kid !== String(i));
+    s.schools.push({ id: store.uid(), kid: String(i), updated: Date.now(), ...v });
+  });
+}
+
+function schoolSheet(i, { method = null } = {}) {
+  const kid = S().family.kids[i];
+  const who = kid?.name || `Child ${i + 1}`;
+  const sc = schoolOf(i);
+  if (sc && !method) {
+    const today = store.isoDate();
+    const next = sc.events.filter((e) => e.end >= today).slice(0, 8);
+    return openSheet(`<h2>${esc(sc.name)}</h2><p class="meta">${esc(who)} · ${esc(schoolStatus(sc))}</p>
+      ${sc.error ? `<p class="tip">Last refresh failed: ${esc(sc.error)}</p>` : ''}
+      <h3>Coming up</h3>
+      ${next.length ? `<div class="class-list">${next.map((e) => `<div class="cls-row"><span>${e.kind === 'off' ? '🏖️' : e.kind === 'early' ? '⏰' : '🏫'} ${esc(e.title)}<span class="meta">${e.kind === 'off' ? 'No school' : e.kind === 'early' ? 'Early release / late start' : 'School event'}</span></span><span class="meta">${fmtDate(e.date)}${e.end !== e.date ? ` – ${fmtDate(e.end)}` : ''}${e.start ? ` ${esc(e.start)}` : ''}</span></div>`).join('')}</div>` : '<p class="meta">No upcoming dates.</p>'}
+      <div class="col gap mt">
+        ${sc.source === 'feed' ? '<button class="btn primary" id="sc-refresh">Refresh now</button>' : ''}
+        <button class="btn" id="sc-replace">Link a different way</button>
+        <button class="btn ghost danger" id="sc-unlink">Unlink ${esc(sc.name)}</button>
+      </div>`,
+    (el) => {
+      $('#sc-refresh', el)?.addEventListener('click', async (e) => {
+        e.target.disabled = true; e.target.textContent = 'Refreshing…';
+        await refreshSchool(sc, { force: true });
+        schoolSheet(i);
+        rerender();
+      });
+      $('#sc-replace', el).onclick = () => schoolSheet(i, { method: 'choose' });
+      $('#sc-unlink', el).onclick = () => { store.set((s) => (s.schools = s.schools.filter((x) => x.id !== sc.id))); closeSheet(); toast('School unlinked'); rerender(); };
+    });
+  }
+  const photo = api.schoolPhotoEnabled();
+  openSheet(`<h2>Link ${esc(who)}'s school</h2>
+    <p class="meta">Pick whatever your school gives you. LittleRoam only reads dates (days off, early release, events): no grades, no messages, no logins.</p>
+    <form id="school-form" class="col gap">
+      <label>School name<input class="input" name="school" maxlength="80" value="${esc(sc?.name || '')}" placeholder="e.g. Grand Ridge Elementary" /></label>
+      <div class="method ${method === 'url' || method === 'choose' || !method ? 'open' : ''}" data-method="url">
+        <p class="method-title">🔗 Paste a calendar link</p>
+        <p class="meta">From the school website, Brightwheel, ParentSquare or a Google calendar: look for “Subscribe”, “iCal” or “Add to calendar”, and copy the link (it often ends in .ics or starts with webcal://).</p>
+        <div class="row gap"><input class="input grow" name="url" inputmode="url" autocomplete="off" placeholder="https://… or webcal://…" aria-label="Calendar link" /><button class="btn primary" id="link-url" type="submit">Link</button></div>
+      </div>
+      <div class="method" data-method="file">
+        <p class="method-title">📄 Import a calendar file</p>
+        <p class="meta">Downloaded a .ics file from the school? Choose it here. It won't update by itself; import again when the school sends a new one.</p>
+        <label class="btn file-btn">Choose .ics file<input type="file" id="ics-file" accept=".ics,text/calendar" hidden /></label>
+      </div>
+      <div class="method" data-method="photo">
+        <p class="method-title">📷 Snap the newsletter or calendar</p>
+        ${photo ? `<p class="meta">AI reads the dates off the picture and you check them before anything is saved. The photo is sent to Claude and not kept.</p>
+          <label class="btn file-btn">Take or choose a photo<input type="file" id="photo-file" accept="image/*" hidden /></label>`
+        : '<p class="meta">Reading photos uses AI, which is switched on when the app runs on its server with an AI key.</p>'}
+      </div>
+      <p class="status meta" id="school-status" role="status"></p>
+    </form>
+    <details class="help"><summary>Where do I find the calendar link?</summary>
+      <ul class="list">
+        <li><b>School website:</b> open the school's calendar page and look for “Subscribe”, “iCal”, “ICS” or “Add to Google Calendar”.</li>
+        <li><b>ParentSquare, Brightwheel and similar apps:</b> some let parents subscribe to the school calendar from the app, if the school has turned it on. Ask the office if you can't find it.</li>
+        <li><b>Shared Google Calendar:</b> the school's “public address in iCal format”.</li>
+        <li>No link at all? Use a photo of the newsletter instead.</li>
+      </ul>
+      <p class="fine">Menus differ between apps and change over time, so these are pointers, not exact steps.</p></details>`,
+  (el) => {
+    const status = (t, err = false) => { const p = $('#school-status', el); p.textContent = t; p.classList.toggle('error', err); };
+    const name = () => $('[name=school]', el).value.trim();
+    const need = () => { if (!name()) { status('Add the school name first.', true); $('[name=school]', el).focus(); return false; } return true; };
+    const finish = (v) => {
+      const upcoming = v.events.filter((e) => e.end >= store.isoDate());
+      const off = upcoming.filter((e) => e.kind === 'off').length;
+      saveSchool(i, v);
+      toast(`${name()} linked: ${upcoming.length} upcoming date${upcoming.length === 1 ? '' : 's'}, ${off} day${off === 1 ? '' : 's'} off`);
+      schoolSheet(i);
+      rerender();
+    };
+    $('#school-form', el).onsubmit = async (e) => {
+      e.preventDefault();
+      if (!need()) return;
+      const url = normaliseFeedUrl($('[name=url]', el).value);
+      if (!url) return status('Paste the calendar link. It starts with https:// or webcal://.', true);
+      status('Reading the calendar…');
+      try {
+        const events = parseICS(await api.fetchSchoolFeed(url), { today: store.isoDate() });
+        finish({ name: name(), source: 'feed', url, events });
+      } catch (err) { status(err.message, true); }
+    };
+    $('#ics-file', el).onchange = async (e) => {
+      const f = e.target.files[0];
+      e.target.value = ''; // so choosing the same file again still works
+      if (!f || !need()) return;
+      try {
+        if (f.size > 2_000_000) throw new Error('That file is too big to be a school calendar.');
+        finish({ name: name(), source: 'file', events: parseICS(await f.text(), { today: store.isoDate() }) });
+      } catch (err) { status(err.message, true); }
+    };
+    $('#photo-file', el)?.addEventListener('change', async (e) => {
+      const f = e.target.files[0];
+      e.target.value = '';
+      if (!f || !need()) return;
+      status('Reading the dates… this can take a few seconds.');
+      try {
+        const blob = await store.compressImage(f, 1600, 0.85);
+        const image = await new Promise((r, j) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.onerror = () => j(new Error('Could not read the photo.')); fr.readAsDataURL(blob); });
+        const res = await api.readSchoolPhoto({ fam: famId(), image, today: store.isoDate(), school: name() });
+        reviewPhotoDates(i, name(), res);
+      } catch (err) { status(err.message, true); }
+    });
+  });
+}
+
+// AI-read dates are only saved after the parent has checked them.
+function reviewPhotoDates(i, name, { events, note }) {
+  openSheet(`<h2>Check these dates</h2><p class="meta">${esc(note || 'Here is what I could read.')} Untick anything that's wrong.</p>
+    ${events.length ? `<form id="review" class="col gap-sm">${events.map((e, n) => `<label class="review-row"><input type="checkbox" name="keep" value="${n}" checked />
+      <span><b>${esc(e.title)}</b><span class="meta">${fmtDate(e.date)}${e.end !== e.date ? ` – ${fmtDate(e.end)}` : ''} · ${e.kind === 'off' ? 'No school' : e.kind === 'early' ? 'Early release' : 'Event'}</span></span></label>`).join('')}
+      <button class="btn primary big">Save ${esc(name)} dates</button></form>`
+    : '<p class="empty">No dates found in that picture. Try a clearer photo, or paste the calendar link.</p><button class="btn" id="again">Try again</button>'}`,
+  (el) => {
+    $('#again', el)?.addEventListener('click', () => schoolSheet(i, { method: 'photo' }));
+    $('#review', el)?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const keep = new Set(new FormData(e.target).getAll('keep').map(Number));
+      const prev = schoolOf(i);
+      const kept = events.filter((_, n) => keep.has(n));
+      // Photos add to what's there (a newsletter at a time); a new school name starts fresh.
+      const merged = prev && prev.source === 'photo' && prev.name === name ? [...prev.events, ...kept] : kept;
+      const uniq = [...new Map(merged.map((x) => [`${x.date}|${x.title}`, x])).values()].sort((a, b) => a.date.localeCompare(b.date));
+      saveSchool(i, { name, source: 'photo', events: uniq });
+      toast(`Saved ${kept.length} date${kept.length === 1 ? '' : 's'}`);
+      schoolSheet(i);
+      rerender();
+    });
+  });
+}
+
+// Linked calendar feeds refresh once a day when the app opens.
+async function refreshSchool(sc, { force = false } = {}) {
+  if (sc.source !== 'feed' || (!force && Date.now() - sc.updated < 20 * 3600 * 1000)) return;
+  try {
+    const events = parseICS(await api.fetchSchoolFeed(sc.url), { today: store.isoDate() });
+    store.set((s) => { const x = s.schools.find((y) => y.id === sc.id); if (x) Object.assign(x, { events, updated: Date.now(), error: undefined }); });
+  } catch (err) {
+    store.set((s) => { const x = s.schools.find((y) => y.id === sc.id); if (x) x.error = err.message; });
+  }
+}
+
+function mcpSheet() {
+  const server = api.chatEnabled() || api.communityEnabled();
+  const url = `${location.origin}/mcp`;
+  openSheet(`<h2>Use LittleRoam in Claude or ChatGPT</h2>
+    <p class="meta">LittleRoam has an MCP server, so AI assistants that support custom connectors can search our activities, find places, check the weather and plan a day.</p>
+    ${server ? `<label>Server address<div class="row gap"><input class="input grow" readonly value="${esc(url)}" id="mcp-url" /><button class="btn" id="copy-mcp">Copy</button></div></label>
+      <ol class="list steps"><li>In your assistant's settings, find connectors (sometimes called integrations, tools or MCP servers).</li><li>Add a custom connector and paste the address above. No sign-in is needed.</li><li>Ask something like “Find a rainy-day activity for a 5-year-old near Issaquah”.</li></ol>
+      <p class="fine">Which assistants and plans support custom connectors changes often; check your assistant's help pages. The MCP server only sees what you type into the assistant, never your LittleRoam plans or kids.</p>`
+    : '<p class="empty">The MCP server runs with the full LittleRoam server, which this copy of the app isn\'t using.</p>'}`,
+  (el) => $('#copy-mcp', el)?.addEventListener('click', async () => { try { await navigator.clipboard.writeText(url); toast('Copied'); } catch { $('#mcp-url', el).select(); } }));
+}
+
+function dataSheet() {
+  openSheet(`<h2>Backup &amp; your data</h2><p class="meta">Everything is stored only on this device. Back it up so you never lose your memories (photos are not included in the backup file).</p>
+    <div class="col gap"><button class="btn" id="export">⬇ Export backup</button><label class="btn">⬆ Import backup<input type="file" id="import" accept="application/json" hidden /></label><button class="btn ghost danger" id="wipe">Erase everything</button></div>`,
+  (el) => {
+    $('#export', el).onclick = () => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([store.exportJSON()], { type: 'application/json' }));
+      a.download = `littleroam-backup-${store.isoDate()}.json`;
+      a.click();
+    };
+    $('#import', el).onchange = async (e) => {
+      try { store.importJSON(await e.target.files[0].text()); toast('Backup restored'); closeSheet(); route(); } catch (err) { toast(err.message); }
+    };
+    $('#wipe', el).onclick = () => {
+      if (!confirm('Erase all plans, memories and settings on this device?')) return;
+      store.reset();
+      indexedDB.deleteDatabase('littleroam-photos');
+      location.hash = '';
+      location.reload();
+    };
+  });
+}
+
 // ======================= The weekend =======================
 let weekendOffset = 0; // 0 = this weekend, 1 = next
 
 function weekendModel(offset = weekendOffset) {
-  const days = weekendDays(new Date(), offset).map((d) => {
+  const week = weekDays(new Date(), offset);
+  const weekdays = week.slice(0, 5).map((d) => ({ ...d, booked: bookedFor(S().classes, d) }));
+  const days = week.slice(5).map((d) => {
     const booked = bookedFor(S().classes, d);
     const f = forecast[d.date];
     const weather = f ? (['wet', 'snow'].includes(weatherBucket(f.code)) || f.rain >= 60 ? 'wet' : 'dry') : null;
     return { ...d, booked, windows: d.past ? [] : freeWindows(booked, d.key), forecast: f, weather };
   });
   const key = days[0].date;
-  return { key, days, plan: S().weekends[key] || null };
+  return { key, days, weekdays, week, plan: S().weekends[key] || null };
 }
 
 const kidName = (i) => (i === '' || i == null ? '' : S().family.kids[Number(i)]?.name || (S().family.kids.length > 1 ? `Child ${Number(i) + 1}` : ''));
-const weatherChip = (f) => (f ? `<span class="chip sm">${esc(weatherLabel(f.code))} · ${Math.round(f.max)}${esc(f.unit)}${f.rain >= 30 ? ` · ${f.rain}% rain` : ''}</span>` : '');
+const weatherIcon = (code) => (code == null ? '' : code === 0 ? '☀️' : code <= 3 ? '⛅' : code <= 48 ? '🌫️' : code >= 95 ? '⛈️' : (code >= 71 && code <= 77) || code === 85 || code === 86 ? '❄️' : '🌧️');
+const weatherShort = (f) => (f ? `${weatherIcon(f.code)} ${Math.round(f.max)}°${f.rain >= 50 ? ` · ${f.rain}% rain` : ''}` : '');
 
 function renderWeekend(root) {
-  const { key, days, plan } = weekendModel();
-  const s = S();
-  const hello = s.family.name ? `the ${esc(s.family.name)}s` : 'your family';
+  const { key, days, weekdays, plan } = weekendModel();
   const live = days.filter((d) => !d.past);
   const freeCount = live.reduce((n, d) => n + d.windows.length, 0);
+  const allBooked = [...weekdays, ...days].flatMap((d) => d.booked);
+  const classCount = allBooked.length;
+  const nClasses = allBooked.filter((c) => c.repeat !== 'once').length;
+  const nPlans = classCount - nClasses;
+  const bookedSummary = [nClasses && `<b>${nClasses} class${nClasses > 1 ? 'es' : ''}</b>`, nPlans && `<b>${nPlans} plan${nPlans > 1 ? 's' : ''}</b>`].filter(Boolean).join(' · ');
+  const vibe = S().lastVibe || 'mix';
   root.innerHTML = `
-    <section class="hero">
-      <p class="eyebrow">${SEASONS[currentSeason()].emoji} ${fmtDate(days[0].date, { day: 'numeric', month: 'short' })} – ${fmtDate(days[1].date, { day: 'numeric', month: 'short' })}</p>
-      <h1>A weekend for ${hello}</h1>
-      <p class="lede">Add the classes you already have, and I'll fill the free time with screen-free adventures.</p>
+    <a class="back" href="#home">‹ Home</a>
+    <section class="wk-head">
+      <div>
+        <p class="eyebrow">${fmtDate(days[0].date, { day: 'numeric', month: 'short' })} – ${fmtDate(days[1].date, { day: 'numeric', month: 'short' })}</p>
+          <h1>${weekendOffset ? 'Next weekend' : 'This weekend'}</h1>
+      </div>
+      <div class="seg mini" role="tablist">
+        <button role="tab" data-wk="0" class="${weekendOffset === 0 ? 'on' : ''}" aria-selected="${weekendOffset === 0}">This</button>
+        <button role="tab" data-wk="1" class="${weekendOffset === 1 ? 'on' : ''}" aria-selected="${weekendOffset === 1}">Next</button>
+      </div>
     </section>
-    <div class="seg two" role="tablist">
-      <button role="tab" data-wk="0" class="${weekendOffset === 0 ? 'on' : ''}" aria-selected="${weekendOffset === 0}">This weekend</button>
-      <button role="tab" data-wk="1" class="${weekendOffset === 1 ? 'on' : ''}" aria-selected="${weekendOffset === 1}">Next weekend</button>
+
+    <div class="classes-bar card">
+      <button class="classes-sum" id="classes-btn">🗓️ ${classCount ? `${bookedSummary} this week <span class="meta">›</span>` : "<span class=\"meta\">Add the kids' classes</span>"}</button>
+      <button class="fab" id="add-class-top" aria-label="Add a class" title="Add a class">+</button>
     </div>
 
-    <section class="card pad">
-      <div class="row space center-v"><h2 class="h0">🗓️ Classes &amp; plans</h2><button class="btn sm" id="add-class">+ Add</button></div>
-      ${days.map((d) => `<div class="booked-day"><strong class="meta">${d.name}${d.past ? ' (over)' : ''}</strong>
-        ${d.booked.length ? d.booked.map((c) => `<div class="row space center-v booked">
-          <span>${esc(classKind(c.title).emoji)} <strong>${esc(c.start)}–${esc(c.end)}</strong> ${esc(c.title)}${kidName(c.kid) ? ` <span class="chip sm">${esc(kidName(c.kid))}</span>` : ''}${c.repeat === 'once' ? ' <span class="chip sm">this week only</span>' : ''}${c.where ? `<span class="meta"> · ${esc(c.where)}</span>` : ''}</span>
-          <button class="icon-btn" data-edit-class="${c.id}" aria-label="Edit ${esc(c.title)}">✎</button></div>`).join('') : '<p class="meta">Nothing booked</p>'}</div>`).join('')}
-    </section>
-
-    ${!plan ? `<section class="card pad plan-form">
-      <h2 class="h0">✨ Plan our weekend</h2>
-      ${freeCount ? `<p class="meta">${freeCount} free slot${freeCount > 1 ? 's' : ''} to fill${live.length < 2 ? ' (Saturday is over)' : ''}.</p>` : '<p class="meta">No free time left this weekend. Enjoy the classes!</p>'}
-      <div class="vibes" role="radiogroup" aria-label="What kind of weekend?">${Object.entries(VIBES).map(([k, v], i) => `<label class="vibe"><input type="radio" name="vibe" value="${k}" ${(s.lastVibe || 'mix') === k ? 'checked' : ''}/><span><b>${v.emoji} ${v.label}</b><small>${v.desc}</small></span></label>`).join('')}</div>
-      ${api.aiEnabled() ? `<label class="mt">Anything else I should know? <span class="meta">(optional)</span><input id="wk-note" class="input" maxlength="300" placeholder="e.g. Grandma visits Sunday lunch, Mia has a cold" /></label>
-        <p class="fine">For AI planning we send your note, kids' ages, class types and times (not names), the weather and nearby place names.</p>` : ''}
-      <button class="btn primary mt" id="plan-btn" ${freeCount ? '' : 'disabled'}>${api.aiEnabled() ? '✨ Plan it with AI' : '✨ Plan it for me'}</button>
+    ${!plan ? `<section class="plan-form">
+      <div class="vibes" role="radiogroup" aria-label="What kind of weekend?">${Object.entries(VIBES).map(([k, v]) => `<label class="vibe"><input type="radio" name="vibe" value="${k}" ${vibe === k ? 'checked' : ''}/><span>${v.emoji} ${v.label}</span></label>`).join('')}</div>
+      ${api.aiEnabled() ? '<input id="wk-note" class="input" maxlength="300" placeholder="Anything I should know? (optional)" aria-label="Anything I should know?" />' : ''}
+      <button class="btn primary big" id="plan-btn" ${freeCount ? '' : 'disabled'}>${freeCount ? '✨ Plan our weekend' : 'No free time this weekend'}</button>
+      ${api.aiEnabled() ? '<p class="fine center">AI sees ages, class types and times, weather and nearby places. Never names.</p>' : ''}
     </section>` : ''}
 
     ${plan?.message ? `<p class="ai-msg">✨ ${esc(plan.message)}</p>` : ''}
-    <section id="timeline-wk">${plan ? days.map((d) => dayTimeline(d, plan)).join('') : ''}</section>
-    ${plan ? `<div class="row wrap gap">
+    <section id="timeline-wk">${plan ? days.map((d) => dayTimeline(d, plan)).join('') : days.filter((d) => d.booked.length && !d.past).map((d) => dayTimeline(d, { picks: {}, done: {} }, { preview: true })).join('')}</section>
+    ${plan ? `<div class="row gap center-row">
       <button class="btn primary" id="send-plan">↗ Send to my partner</button>
-      <button class="btn" id="replan">🔄 Re-plan</button>
-      <button class="btn ghost" id="clear-plan">Clear</button></div>` : ''}
-    <section id="popular"></section>`;
+      <button class="btn ghost" id="replan">Re-plan</button></div>` : ''}
+    <section id="popular"></section>
+`;
 
   $$('[data-wk]', root).forEach((b) => (b.onclick = () => { weekendOffset = Number(b.dataset.wk); renderWeekend(root); }));
-  $('#add-class', root).onclick = () => classForm();
-  $$('[data-edit-class]', root).forEach((b) => (b.onclick = () => classForm(S().classes.find((c) => c.id === b.dataset.editClass), days.find((d) => d.booked.some((c) => c.id === b.dataset.editClass)))));
+  $('#classes-btn', root).onclick = () => (classCount ? classesSheet() : classForm());
+  $('#add-class-top', root).onclick = () => classForm();
   const planBtn = $('#plan-btn', root);
   if (planBtn) planBtn.onclick = () => {
-    const vibe = $('input[name=vibe]:checked', root)?.value || 'mix';
-    store.set((st) => (st.lastVibe = vibe));
-    makePlan({ vibe, note: $('#wk-note', root)?.value.trim() || '' });
+    const v = $('input[name=vibe]:checked', root)?.value || 'mix';
+    store.set((st) => (st.lastVibe = v));
+    makePlan({ vibe: v, note: $('#wk-note', root)?.value.trim() || '' });
   };
   if (plan) {
     $('#replan', root).onclick = () => { store.set((st) => delete st.weekends[key]); renderWeekend(root); };
-    $('#clear-plan', root).onclick = () => { if (confirm('Clear this weekend\'s plan? Your classes stay.')) { store.set((st) => delete st.weekends[key]); renderWeekend(root); } };
     $('#send-plan', root).onclick = () => sharePlan(days, plan);
     $$('[data-swap]', root).forEach((b) => (b.onclick = () => swap(b.dataset.swap)));
-    $$('[data-rm-pick]', root).forEach((b) => (b.onclick = () => { store.set((st) => delete st.weekends[key].picks[b.dataset.rmPick]); renderWeekend(root); }));
     $$('[data-fill]', root).forEach((b) => (b.onclick = () => swap(b.dataset.fill)));
-    $$('[data-done-pick]', root).forEach((b) => (b.onclick = () => {
-      const [winId, date] = b.dataset.donePick.split('|');
-      const a = byId[plan.picks[winId].id];
-      memoryForm({ activityId: a.id, title: a.title, date, onSaved: () => store.set((st) => (st.weekends[key].done[winId] = true)) });
+    $$('[data-slot]', root).forEach((b) => (b.onclick = () => {
+      const [winId, date] = b.dataset.slot.split('|');
+      openActivity(byId[plan.picks[winId].id], { slot: { key, winId, date } });
     }));
   }
-  renderPopular();
 }
 
-function dayTimeline(d, plan) {
-  if (d.past) return `<div class="day card pad past"><strong>${d.name}</strong> <span class="meta">${fmtDate(d.date)} · over</span></div>`;
-  const items = [
-    ...d.booked.map((c) => ({ t: c.s, html: `<div class="slot booked-slot"><span class="time">${esc(c.start)}–${esc(c.end)}</span>
-      <span class="slot-body">${esc(classKind(c.title).emoji)} <strong>${esc(c.title)}</strong>${kidName(c.kid) ? ` <span class="chip sm">${esc(kidName(c.kid))}</span>` : ''}${c.where ? `<span class="meta"> · ${esc(c.where)}</span>` : ''}</span></div>` })),
-    { t: toMin('12:30'), html: '<div class="slot lunch"><span class="time">12:30</span><span class="slot-body meta">🥪 Lunch &amp; rest</span></div>' },
-    ...d.windows.map((w) => {
+function dayTimeline(d, plan, { preview = false } = {}) {
+  if (d.past) return '';
+  const rows = [
+    ...d.booked.map((c) => ({ t: c.s, html: `<div class="tl-row tl-booked ${c.repeat === 'once' ? 'tl-plan' : 'tl-class'}"><span class="time">${esc(c.start)}</span>
+      <span class="tl-body">${esc(classKind(c.title).emoji)} ${esc(c.title)}<span class="meta">${[c.repeat === 'once' ? 'Plan' : 'Class', kidName(c.kid), `until ${c.end}`].filter(Boolean).map(esc).join(' · ')}</span></span></div>` })),
+    ...(preview ? [] : d.windows.map((w) => {
       const p = plan.picks[w.id];
       const a = p && byId[p.id];
+      if (!a) return { t: toMin(w.start), html: `<div class="tl-row tl-free"><span class="time">${esc(w.start)}</span><button class="link sm" data-fill="${w.id}">+ Add something</button></div>` };
       const done = plan.done?.[w.id];
-      return { t: toMin(w.start), html: a ? `<div class="slot plan-slot ${done ? 'done' : ''}"><span class="time">${esc(w.start)}</span>
-        <div class="slot-body">${card(a, { compact: true, why: p.why, place: p.place })}
-        <div class="row gap-sm slot-actions">
-          <button class="btn sm" data-done-pick="${w.id}|${d.date}">${done ? '💛 Remembered' : '✅ We did it'}</button>
-          <button class="btn sm ghost" data-swap="${w.id}">🔄 Swap</button>
-          <button class="icon-btn" data-rm-pick="${w.id}" aria-label="Remove from plan" title="Remove">✕</button></div></div></div>`
-        : `<div class="slot free"><span class="time">${esc(w.start)}</span><span class="slot-body meta">Free until ${esc(w.end)}. Leave room for boredom, or <button class="link sm" data-fill="${w.id}">add something</button></span></div>` };
-    }),
+      return { t: toMin(w.start), html: `<div class="tl-row tl-act ${done ? 'done' : ''}"><span class="time">${esc(w.start)}</span>
+        <button class="tl-body" data-slot="${w.id}|${d.date}">${esc(a.emoji)} ${esc(a.title)}${done ? ' 💛' : ''}${a.ai ? ' <span class="chip sm ai">AI</span>' : ''}
+          <span class="meta">${[fmtMins(a.mins), p.place ? `📍 ${p.place}` : settingLabel[a.setting]].map(esc).join(' · ')}</span></button>
+        <button class="icon-btn" data-swap="${w.id}" aria-label="Swap ${esc(a.title)}" title="Swap">🔄</button></div>` };
+    })),
   ].sort((x, y) => x.t - y.t);
-  return `<div class="day card pad"><div class="row space center-v"><strong>${d.name} <span class="meta">${fmtDate(d.date, { day: 'numeric', month: 'short' })}</span></strong>${weatherChip(d.forecast)}</div>
-    ${items.map((i) => i.html).join('')}</div>`;
+  return `<div class="day"><div class="day-head"><strong>${d.name}</strong><span class="meta">${weatherShort(d.forecast)}</span></div>
+    ${rows.map((r) => r.html).join('')}</div>`;
+}
+
+// All classes for the week, grouped by day, in a sheet.
+function classesSheet() {
+  const { weekdays, days } = weekendModel();
+  const week = [...weekdays, ...days].filter((d) => d.booked.length);
+  openSheet(`<h2>Classes this week</h2>
+    ${week.map((d) => `<div class="cls-day ${d.past ? 'past' : ''}"><p class="meta">${d.name}${d.today ? ' · today' : d.past ? ' · done' : ''}</p>
+      ${d.booked.map((c) => `<button class="cls-row" data-edit-class="${c.id}|${d.date}">
+        <span>${esc(classKind(c.title).emoji)} ${esc(c.title)}<span class="meta">${[kidName(c.kid), c.where, c.repeat === 'once' ? 'this week only' : ''].filter(Boolean).map(esc).join(' · ')}</span></span>
+        <span class="meta">${esc(c.start)}–${esc(c.end)}</span></button>`).join('')}</div>`).join('')}
+    <button class="btn primary big" id="add-class">+ Add a class</button>
+    <button class="btn ghost big" id="find-classes">🔎 Find classes nearby</button>`,
+  (el) => {
+    $('#add-class', el).onclick = () => classForm();
+    $('#find-classes', el).onclick = () => classFinder();
+    $$('[data-edit-class]', el).forEach((b) => (b.onclick = () => {
+      const [id, date] = b.dataset.editClass.split('|');
+      classForm(S().classes.find((c) => c.id === id), week.find((d) => d.date === date));
+    }));
+  });
 }
 
 async function makePlan({ vibe, note }) {
@@ -322,6 +808,12 @@ function addToWeekend(a) {
 
 function sharePlan(days, plan) {
   const lines = ['Our weekend 🌱'];
+  const { weekdays } = weekendModel();
+  const upcoming = weekdays.filter((d) => !d.past && d.booked.length);
+  if (upcoming.length) {
+    lines.push('', 'Classes this week');
+    for (const d of upcoming) for (const c of d.booked) lines.push(`${d.name.slice(0, 3)} ${c.start}–${c.end} ${classKind(c.title).emoji} ${c.title}${kidName(c.kid) ? ` (${kidName(c.kid)})` : ''}`);
+  }
   for (const d of days.filter((x) => !x.past)) {
     lines.push('', `${d.name} ${fmtDate(d.date, { day: 'numeric', month: 'short' })}`);
     const rows = [
@@ -334,38 +826,45 @@ function sharePlan(days, plan) {
 }
 
 // ---------------- Classes & one-off plans ----------------
-function classForm(c = null, day = null) {
+function classForm(c = null, day = null, prefill = null) {
   const kids = S().family.kids;
-  const { days } = weekendModel();
+  const { week } = weekendModel();
   const isNew = !c;
-  c ??= { title: '', kid: kids.length === 1 ? '0' : '', day: 'sat', start: '09:00', end: '10:00', where: '', repeat: 'weekly' };
+  c ??= { title: '', kid: kids.length === 1 ? '0' : '', days: ['sat'], start: '09:00', end: '10:00', where: '', repeat: 'weekly', ...prefill };
+  const chosen = classDays(c);
   openSheet(`<h2>${isNew ? 'Add a class or plan' : 'Edit'}</h2>
+    ${isNew && !prefill ? '<button type="button" class="link sm find-link" id="find-from-form">🔎 Find one nearby</button>' : ''}
     <form id="cls" class="col gap">
       <label>What is it?<input class="input" name="title" required maxlength="60" value="${esc(c.title)}" placeholder="Swimming, football, ballet, birthday party…" /></label>
       ${kids.length ? `<label>Who's going?<select class="input" name="kid"><option value="">Everyone</option>${kids.map((k, i) => `<option value="${i}" ${String(c.kid) === String(i) ? 'selected' : ''}>${esc(k.name || `Child ${i + 1}`)} (${ageFromBirthYear(k.birthYear)})</option>`).join('')}</select></label>` : ''}
+      <fieldset><legend>Which day${c.repeat === 'once' ? '' : 's'}?</legend><div class="day-chips">${DAY_KEYS.map((k) => `<label class="day-chip"><input type="checkbox" name="days" value="${k}" ${chosen.includes(k) ? 'checked' : ''}/><span>${DAY_NAMES[k].slice(0, 3)}</span></label>`).join('')}</div></fieldset>
       <div class="row gap">
-        <label class="grow day-pick">Day<select class="input" name="day"><option value="sat" ${c.day === 'sat' ? 'selected' : ''}>Saturday</option><option value="sun" ${c.day === 'sun' ? 'selected' : ''}>Sunday</option></select></label>
         <label>From<input class="input" type="time" name="start" required value="${esc(c.start)}" step="900" /></label>
         <label>To<input class="input" type="time" name="end" required value="${esc(c.end)}" step="900" /></label>
       </div>
       <label>Where? <span class="meta">(optional)</span><input class="input" name="where" maxlength="60" value="${esc(c.where)}" placeholder="Leisure centre" /></label>
       <fieldset class="row gap wrap"><legend>How often?</legend>
         <label class="radio"><input type="radio" name="repeat" value="weekly" ${c.repeat !== 'once' ? 'checked' : ''}/> Every week</label>
-        <label class="radio"><input type="radio" name="repeat" value="once" ${c.repeat === 'once' ? 'checked' : ''}/> This weekend only</label>
+        <label class="radio"><input type="radio" name="repeat" value="once" ${c.repeat === 'once' ? 'checked' : ''}/> This week only</label>
       </fieldset>
       <button class="btn primary">${isNew ? 'Add' : 'Save'}</button>
       ${!isNew ? `<div class="row gap wrap">${c.repeat !== 'once' && day ? `<button type="button" class="btn ghost" id="skip">Skip on ${fmtDate(day.date)} only</button>` : ''}<button type="button" class="btn ghost danger" id="del">Delete</button></div>` : ''}
     </form>`,
   (el) => {
+    $('#find-from-form', el)?.addEventListener('click', classFinder);
     $('#cls', el).onsubmit = (e) => {
       e.preventDefault();
       const f = new FormData(e.target);
-      const v = { title: String(f.get('title')).trim(), kid: String(f.get('kid') ?? ''), day: f.get('day'), start: f.get('start'), end: f.get('end'), where: String(f.get('where')).trim(), repeat: f.get('repeat') };
+      const v = { title: String(f.get('title')).trim(), kid: String(f.get('kid') ?? ''), days: DAY_KEYS.filter((k) => f.getAll('days').includes(k)), start: f.get('start'), end: f.get('end'), where: String(f.get('where')).trim(), repeat: f.get('repeat') };
+      if (!v.days.length) return toast('Pick at least one day.');
       if (toMin(v.end) <= toMin(v.start)) return toast('The end time needs to be after the start time.');
-      if (v.repeat === 'once') v.date = days.find((d) => d.key === v.day).date;
+      if (v.repeat === 'once') {
+        if (v.days.length > 1) return toast('A one-off plan happens on one day. Pick a single day, or choose "Every week".');
+        v.date = week.find((d) => d.key === v.days[0]).date;
+      }
       store.set((s) => {
         if (isNew) s.classes.push({ id: store.uid(), ...v });
-        else Object.assign(s.classes.find((x) => x.id === c.id), v);
+        else { const x = s.classes.find((y) => y.id === c.id); delete x.day; Object.assign(x, v); }
       });
       closeSheet();
       toast(isNew ? `${classKind(v.title).emoji} ${v.title} added` : 'Saved');
@@ -375,6 +874,41 @@ function classForm(c = null, day = null) {
     if (del) del.onclick = () => { store.set((s) => (s.classes = s.classes.filter((x) => x.id !== c.id))); closeSheet(); rerender(); };
     const skip = $('#skip', el);
     if (skip) skip.onclick = () => { store.set((s) => { const x = s.classes.find((y) => y.id === c.id); (x.skip ??= {})[day.date] = true; }); closeSheet(); toast(`Skipped on ${fmtDate(day.date)}`); rerender(); };
+  });
+}
+
+// ---------------- Find classes nearby ----------------
+let finderType = 'swimming';
+
+function classFinder() {
+  const loc = S().location;
+  openSheet(`<h2>Find classes nearby</h2>
+    ${loc ? '' : '<p class="meta">Set your area first so I know where to look.</p><a class="btn primary" href="#near">📍 Set my area</a>'}
+    ${loc ? `<div class="chips-scroll">${Object.entries(CLASS_TYPES).map(([k, t]) => `<button class="chip-btn ${k === finderType ? 'on' : ''}" data-ctype="${k}">${t.emoji} ${t.label}</button>`).join('')}</div>
+      <div id="finder-list"><p class="empty">Looking… 🔎</p></div>
+      <p class="fine">Venues from OpenStreetMap. Class times aren't in map data, so check the venue's website, or ask the chat to look them up.</p>` : ''}`,
+  async (el) => {
+    if (!loc) return;
+    $$('[data-ctype]', el).forEach((b) => (b.onclick = () => { finderType = b.dataset.ctype; classFinder(); }));
+    const t = CLASS_TYPES[finderType];
+    const list = $('#finder-list', el);
+    try {
+      const places = (await findPlaces(finderType, loc, 10)).filter((p) => p.named).slice(0, 15);
+      if (!$('#finder-list')) return; // sheet closed or changed
+      list.innerHTML = places.length ? places.map((p, i) => `<div class="venue">
+          <div><b>${t.emoji} ${esc(p.name)}</b><span class="meta">${p.km < 1 ? Math.round(p.km * 1000) + ' m' : p.km.toFixed(1) + ' km'} away${p.website ? ` · <a href="${esc(p.website)}" target="_blank" rel="noopener">Website</a>` : ` · <a href="${directionsUrl(p)}" target="_blank" rel="noopener">Directions</a>`}</span></div>
+          <div class="row gap-sm wrap"><button class="btn sm" data-add-venue="${i}">+ Add as a class</button>${api.chatEnabled() ? `<button class="btn sm ghost" data-ask-venue="${i}">💬 Ask chat for times</button>` : ''}</div>
+        </div>`).join('') : `<p class="empty">No ${t.label.toLowerCase()} venues found within 10 km. Try another type.</p>`;
+      $$('[data-add-venue]', list).forEach((b) => (b.onclick = () => classForm(null, null, { title: t.title, where: places[Number(b.dataset.addVenue)].name })));
+      $$('[data-ask-venue]', list).forEach((b) => (b.onclick = () => {
+        const p = places[Number(b.dataset.askVenue)];
+        chat.draft = `Find ${t.label.toLowerCase()} classes for the kids at ${p.name}${p.website ? ` (${p.website})` : ''}: days, times and ages, and add one if it fits our week.`;
+        closeSheet();
+        location.hash = 'chat';
+      }));
+    } catch (e) {
+      if ($('#finder-list')) list.innerHTML = `<p class="empty">${esc(e.message)}</p>`;
+    }
   });
 }
 
@@ -417,27 +951,287 @@ function saveCustoms(customs) {
   Object.assign(byId, ...customs.map((c) => ({ [c.id]: c })));
 }
 
+// ======================= Chat =======================
+// The conversation stays in memory (it holds Claude's raw content blocks, which
+// must be sent back unchanged). The changes it makes are saved like any other edit.
+const chat = { messages: [], log: [], busy: false, remaining: null, draft: '' };
+const CHAT_SUGGESTIONS = [
+  "There's a pumpkin festival nearby this Saturday, let's go",
+  "Leo's football on Thursday moved to 5–6pm",
+  'Find a Saturday morning swimming class for Mia near us',
+  "It's going to rain on Sunday. Make it cosy",
+  'Plan next weekend for us',
+];
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+const dayKeyOf = (iso) => DAY_KEYS[(new Date(iso + 'T12:00').getDay() + 6) % 7];
+const weekOffset = (w) => (w === 'next' ? 1 : 0);
+
+function describeItem(c) {
+  const when = c.repeat === 'once' ? `${fmtDate(c.date)}` : `every ${classDays(c).map((d) => DAY_NAMES[d].slice(0, 3)).join(' & ')}`;
+  return `${classKind(c.title).emoji} ${c.title} · ${when} ${c.start}–${c.end}${kidName(c.kid) ? ` · ${kidName(c.kid)}` : ''}`;
+}
+
+// What Claude sees about the family, sent with every message.
+function appStateText() {
+  const s = S();
+  const now = new Date();
+  const lines = [`Today: ${DAY_NAMES[dayKeyOf(store.isoDate(now))]} ${store.isoDate(now)}, ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`];
+  lines.push(`Area: ${s.location ? (s.location.label === 'Your location' ? 'set (from GPS, no city name)' : s.location.label) : 'not set (Profile → Home area)'}`);
+  lines.push(`Kids: ${s.family.kids.length ? s.family.kids.map((k, i) => `${k.name || `Child ${i + 1}`} (age ${ageFromBirthYear(k.birthYear)})`).join(', ') : 'not added yet'}`);
+  lines.push('Classes & events:');
+  lines.push(...(s.classes.length ? s.classes.map((c) => `- id ${c.id}: ${c.title} | ${c.repeat === 'once' ? `once on ${c.date}` : `weekly ${classDays(c).join(',')}`} ${c.start}-${c.end} | ${kidName(c.kid) || 'everyone'}${c.where ? ` | at ${c.where}` : ''}${c.skip ? ` | skipped: ${Object.keys(c.skip).join(',')}` : ''}`) : ['- none']));
+  const school = schoolEventsBetween(s.schools, store.isoDate(now), addDays(store.isoDate(now), 21)).filter((e) => e.kind !== 'event');
+  if (school.length) lines.push('School days off / early release (next 3 weeks):', ...school.map((e) => `- ${e.date}${e.end !== e.date ? ` to ${e.end}` : ''}: ${e.title} (${e.school}${kidName(e.kid) ? `, ${kidName(e.kid)}` : ''})`));
+  for (const off of [0, 1]) lines.push(weekendStateText(off));
+  return `<app_state>\n${lines.join('\n')}\n</app_state>`;
+}
+
+function weekendStateText(off) {
+  const m = weekendModel(off);
+  const out = [`${off ? 'NEXT' : 'THIS'} WEEKEND (week "${off ? 'next' : 'this'}"):`];
+  for (const d of m.days) {
+    if (d.past) { out.push(`  ${d.name} ${d.date}: over`); continue; }
+    out.push(`  ${d.name} ${d.date}${d.forecast ? `, ${weatherLabel(d.forecast.code)} ${Math.round(d.forecast.max)}°, ${d.forecast.rain ?? 0}% rain` : ''}`);
+    out.push(`    booked: ${d.booked.length ? d.booked.map((c) => `${c.title} ${c.start}-${c.end}`).join('; ') : 'nothing'}`);
+    out.push(`    free slots: ${d.windows.length ? d.windows.map((w) => { const p = m.plan?.picks[w.id]; return `${w.id} (${w.start}-${w.end}, ${w.mins} min) → ${p && byId[p.id] ? `planned: ${p.id}` : 'empty'}`; }).join('; ') : 'none'}`);
+  }
+  return out.join('\n');
+}
+
+const fail = (error) => ({ ok: false, error });
+
+// Runs one tool call from Claude against the family's local data.
+async function runTool(name, input) {
+  const kids = S().family.kids;
+  const kidIndex = (who) => {
+    if (!who || /^(everyone|all|family)$/i.test(who)) return '';
+    const i = kids.findIndex((k) => (k.name || '').toLowerCase() === who.toLowerCase());
+    return i >= 0 ? String(i) : null;
+  };
+  const findItem = (id) => S().classes.find((c) => c.id === id);
+  switch (name) {
+    case 'add_to_calendar': {
+      const v = { title: String(input.title || '').trim().slice(0, 60), kind: input.kind === 'class' ? 'class' : 'event', start: input.start, end: input.end, where: String(input.where || '').trim().slice(0, 60), repeat: input.repeat === 'once' ? 'once' : 'weekly' };
+      if (!v.title) return fail('Missing title.');
+      if (!HHMM.test(v.start) || !HHMM.test(v.end) || toMin(v.end) <= toMin(v.start)) return fail('Times must be HH:MM and the end must be after the start.');
+      const kid = kidIndex(input.who);
+      if (kid === null) return fail(`No child called "${input.who}". Kids are: ${kids.map((k) => k.name).filter(Boolean).join(', ') || 'none named'}.`);
+      v.kid = kid;
+      if (v.repeat === 'once') {
+        if (!ISO_DATE.test(input.date || '')) return fail('A one-off event needs a date (YYYY-MM-DD).');
+        if (input.date < store.isoDate()) return fail('That date is in the past.');
+        v.date = input.date;
+        v.days = [dayKeyOf(input.date)];
+      } else {
+        v.days = DAY_KEYS.filter((k) => (input.days || []).includes(k));
+        if (!v.days.length) return fail('A weekly class needs at least one day.');
+      }
+      const item = { id: store.uid(), ...v };
+      store.set((s) => s.classes.push(item));
+      return { ok: true, id: item.id, added: describeItem(item), note: v.date && dayKeyOf(v.date) !== 'sat' && dayKeyOf(v.date) !== 'sun' ? 'This is on a weekday, so it shows in the week list, not the weekend plan.' : undefined };
+    }
+    case 'update_calendar_item': {
+      const c = findItem(input.id);
+      if (!c) return fail(`No item with id ${input.id}.`);
+      const next = { ...c };
+      if (input.title) next.title = String(input.title).slice(0, 60);
+      if (input.days?.length && c.repeat !== 'once') { next.days = DAY_KEYS.filter((k) => input.days.includes(k)); delete next.day; }
+      if (input.start) next.start = input.start;
+      if (input.end) next.end = input.end;
+      if (input.where) next.where = String(input.where).slice(0, 60);
+      if (input.who) { const k = kidIndex(input.who); if (k === null) return fail(`No child called "${input.who}".`); next.kid = k; }
+      if (!HHMM.test(next.start) || !HHMM.test(next.end) || toMin(next.end) <= toMin(next.start)) return fail('Times must be HH:MM and the end must be after the start.');
+      store.set((s) => Object.assign(s.classes.find((x) => x.id === c.id), next));
+      return { ok: true, updated: describeItem(next) };
+    }
+    case 'remove_calendar_item': {
+      const c = findItem(input.id);
+      if (!c) return fail(`No item with id ${input.id}.`);
+      store.set((s) => (s.classes = s.classes.filter((x) => x.id !== c.id)));
+      return { ok: true, removed: describeItem(c) };
+    }
+    case 'skip_class_once': {
+      const c = findItem(input.id);
+      if (!c) return fail(`No item with id ${input.id}.`);
+      if (c.repeat === 'once') return fail('That is a one-off event. Remove it instead.');
+      if (!ISO_DATE.test(input.date || '') || !classDays(c).includes(dayKeyOf(input.date))) return fail(`${c.title} doesn't happen on ${input.date}.`);
+      store.set((s) => { const x = s.classes.find((y) => y.id === c.id); (x.skip ??= {})[input.date] = true; });
+      return { ok: true, skipped: `${c.title} on ${fmtDate(input.date)}` };
+    }
+    case 'plan_weekend': {
+      const off = weekOffset(input.week);
+      const m = weekendModel(off);
+      const live = m.days.filter((d) => !d.past);
+      if (!live.some((d) => d.windows.length)) return fail('There are no free slots that weekend.');
+      const vibe = VIBES[input.vibe] ? input.vibe : 'mix';
+      const picks = fillWeekend(live, { ages: kidAges(), vibe, recentIds: S().recent, favIds: S().favs });
+      store.set((s) => { s.weekends[m.key] = { vibe, picks, done: {}, message: '' }; s.lastVibe = vibe; });
+      return { ok: true, planned: weekendStateText(off) };
+    }
+    case 'set_slot': {
+      const off = weekOffset(input.week);
+      const m = weekendModel(off);
+      const w = m.days.flatMap((d) => d.windows).find((x) => x.id === input.slot_id);
+      if (!w) return fail(`No free slot ${input.slot_id} that weekend. Free slots: ${m.days.flatMap((d) => d.windows).map((x) => x.id).join(', ') || 'none'}.`);
+      const a = byId[input.activity_id];
+      if (!a || a.ai) return fail(`Unknown activity id ${input.activity_id}. Use an id from the CATALOG.`);
+      if (a.mins > w.mins + 15) return fail(`${a.title} takes ${a.mins} min but that slot is only ${w.mins} min.`);
+      // No repeats in a weekend: if it's already planned elsewhere, move it here.
+      const movedFrom = Object.entries(m.plan?.picks || {}).filter(([k, p]) => p.id === a.id && k !== w.id).map(([k]) => k);
+      store.set((s) => {
+        const pl = (s.weekends[m.key] ??= { vibe: s.lastVibe || 'mix', picks: {}, done: {}, message: '' });
+        for (const k of movedFrom) delete pl.picks[k];
+        pl.picks[w.id] = { id: a.id, why: String(input.reason || '').slice(0, 200) };
+        delete pl.done[w.id];
+      });
+      return { ok: true, set: `${w.id} → ${a.title}`, ...(movedFrom.length ? { moved_from: movedFrom, note: `${movedFrom.join(', ')} is now empty.` } : {}) };
+    }
+    case 'clear_slot': {
+      const m = weekendModel(weekOffset(input.week));
+      if (!m.plan?.picks[input.slot_id]) return fail(`Nothing planned in ${input.slot_id}.`);
+      store.set((s) => delete s.weekends[m.key].picks[input.slot_id]);
+      return { ok: true, cleared: input.slot_id };
+    }
+    case 'find_places': {
+      const loc = S().location;
+      if (!loc) return fail("The family hasn't set their area yet. Ask them to open Profile → Home area.");
+      if (!PLACE_TYPES[input.type] && !CLASS_TYPES[input.type]) return fail('Unknown place type.');
+      try {
+        const places = (await findPlaces(input.type, loc, input.radius_km || 5)).filter((p) => p.named).slice(0, 8);
+        return { ok: true, places: places.map((p) => ({ name: p.name, km: Number(p.km.toFixed(1)), website: p.website || undefined, free: p.fee === 'no' || undefined, toilets: p.toilets === 'yes' || undefined, hours: p.hours || undefined })) };
+      } catch (e) {
+        return fail(e.message);
+      }
+    }
+    default:
+      return fail(`Unknown tool ${name}.`);
+  }
+}
+
+// A one-line receipt shown in the chat for every change.
+function actionLabel(name, input, out) {
+  if (!out.ok) return null;
+  return {
+    add_to_calendar: () => `Added ${out.added}`,
+    update_calendar_item: () => `Updated ${out.updated}`,
+    remove_calendar_item: () => `Removed ${out.removed}`,
+    skip_class_once: () => `Skipping ${out.skipped}`,
+    plan_weekend: () => `Planned ${input.week === 'next' ? 'next' : 'this'} weekend (${VIBES[input.vibe]?.label || 'a bit of both'})`,
+    set_slot: () => `${byId[input.activity_id]?.emoji || ''} ${byId[input.activity_id]?.title} at ${input.slot_id.replace('sat@', 'Sat ').replace('sun@', 'Sun ')}`,
+    clear_slot: () => `Cleared ${input.slot_id.replace('sat@', 'Sat ').replace('sun@', 'Sun ')}`,
+    find_places: () => null,
+  }[name]?.() ?? null;
+}
+
+function renderChat(root) {
+  if (!api.chatEnabled()) {
+    root.innerHTML = `<a class="back" href="#home">‹ Home</a><section class="hero"><h1>Ask LittleRoam</h1>
+      <p class="lede">Just tell LittleRoam what's going on ("there's a pumpkin festival on Saturday, let's go") and it updates your plan.</p></section>
+      <p class="empty">Chat uses AI, which is switched on when the app runs on its server with an AI key. Everything else works without it.</p>`;
+    return;
+  }
+  root.innerHTML = `
+    <a class="back" href="#home">‹ Home</a>
+    <section class="chat-head"><h1>Ask LittleRoam</h1>${chat.log.length ? '<button class="btn sm ghost" id="chat-new">New chat</button>' : ''}</section>
+    <section class="chat-log" id="chat-log" aria-live="polite">
+      ${chat.log.length ? '' : `<p class="meta">Tell me what's going on and I'll update your plan. I can add events and classes, look events up online, move things around and plan a weekend.</p>
+        <div class="chat-suggest">${CHAT_SUGGESTIONS.map((t) => `<button class="chip-btn" data-suggest="${esc(t)}">${esc(t)}</button>`).join('')}</div>`}
+    </section>
+    <form id="chat-form" class="chat-form">
+      <input id="chat-input" class="input grow" autocomplete="off" maxlength="600" placeholder="Message LittleRoam…" aria-label="Message" value="${esc(chat.draft || '')}" ${chat.busy ? 'disabled' : ''} />
+      <button class="btn primary" ${chat.busy ? 'disabled' : ''}>Send</button>
+    </form>
+    <p class="fine chat-fine">Chat sends your message and your family plan (kids' nicknames, ages, classes) to Claude, and may search the web. No photos or memories.</p>`;
+  const log = $('#chat-log', root);
+  chat.log.forEach((entry, i) => { const el = chatEntry(entry); if (i === chat.log.length - 1) el.classList.add('fresh'); log.append(el); });
+  if (chat.busy) log.append(chatEntry({ who: 'typing' }));
+  log.lastElementChild?.scrollIntoView({ block: 'end' });
+  $('#chat-form', root).onsubmit = (e) => { e.preventDefault(); const v = $('#chat-input', root).value.trim(); if (v) sendChat(v); };
+  $$('[data-suggest]', root).forEach((b) => (b.onclick = () => { $('#chat-input', root).value = b.dataset.suggest; $('#chat-input', root).focus(); }));
+  const nw = $('#chat-new', root);
+  if (nw) nw.onclick = () => { Object.assign(chat, { messages: [], log: [], busy: false }); renderChat(root); };
+  chat.draft = '';
+  if (!chat.busy) $('#chat-input', root).focus({ preventScroll: true });
+}
+
+function chatEntry(e) {
+  const el = document.createElement('div');
+  if (e.who === 'typing') { el.className = 'bubble bot'; el.innerHTML = '<span class="typing">Thinking…</span>'; return el; }
+  if (e.who === 'action') { el.className = 'chat-action'; el.textContent = `✓ ${e.text}`; return el; }
+  if (e.who === 'search') { el.className = 'chat-action search'; el.textContent = `🔎 Searched: ${e.text}`; return el; }
+  el.className = `bubble ${e.who === 'me' ? 'me' : 'bot'}${e.error ? ' error' : ''}`;
+  el.innerHTML = esc(e.text).replace(/\n/g, '<br>') + (e.sources?.length ? `<span class="sources">${e.sources.map((s) => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title || new URL(s.url).hostname)}</a>`).join(' · ')}</span>` : '');
+  return el;
+}
+
+function pushLog(entry) {
+  chat.log.push(entry);
+  if ($('main').dataset.view === 'chat') renderChat($('#view'));
+}
+
+async function sendChat(text) {
+  if (chat.busy) return;
+  if (chat.messages.length > 60) return pushLog({ who: 'bot', text: 'This chat is getting long. Tap "New chat" to start fresh (your plan is saved).', error: true });
+  chat.busy = true;
+  const mark = chat.messages.length;
+  chat.messages.push({ role: 'user', content: [{ type: 'text', text }, { type: 'text', text: appStateText() }] });
+  pushLog({ who: 'me', text });
+  try {
+    for (let step = 0; step < 10; step++) {
+      const res = await api.chatStep({ fam: famId(), messages: chat.messages });
+      if (res.remaining != null) chat.remaining = res.remaining;
+      chat.messages.push({ role: 'assistant', content: res.content });
+      for (const b of res.content) {
+        if (b.type === 'server_tool_use' && b.name === 'web_search') pushLog({ who: 'search', text: b.input?.query || 'the web' });
+        if (b.type === 'text' && b.text.trim()) {
+          const sources = [...new Map((b.citations || []).filter((c) => /^https?:\/\//.test(c.url || '')).map((c) => [c.url, { url: c.url, title: c.title }])).values()];
+          pushLog({ who: 'bot', text: b.text.trim(), sources });
+        }
+      }
+      if (res.stop_reason === 'refusal') { pushLog({ who: 'bot', text: "Sorry, I can't help with that one.", error: true }); break; }
+      if (res.stop_reason === 'pause_turn') continue; // a long web search: resume where it left off
+      if (res.stop_reason !== 'tool_use') break;
+      const results = [];
+      for (const b of res.content.filter((x) => x.type === 'tool_use')) {
+        let out;
+        try { out = await runTool(b.name, b.input || {}); } catch (e) { out = fail(e.message); }
+        const label = actionLabel(b.name, b.input || {}, out);
+        if (label) pushLog({ who: 'action', text: label });
+        results.push({ type: 'tool_result', tool_use_id: b.id, content: JSON.stringify(out), ...(out.ok ? {} : { is_error: true }) });
+      }
+      chat.messages.push({ role: 'user', content: results });
+    }
+  } catch (err) {
+    pushLog({ who: 'bot', text: err.message, error: true });
+    // Roll the conversation back to before this message so it stays valid
+    // (changes already made to the plan are kept and were shown as receipts).
+    chat.messages.length = mark;
+  } finally {
+    chat.busy = false;
+    if ($('main').dataset.view === 'chat') renderChat($('#view'));
+  }
+}
+
 // ---------------- Popular near you (anonymous, aggregated) ----------------
 async function renderPopular() {
   const el = $('#popular');
   if (!el || !api.communityEnabled()) return;
   const loc = S().location;
   const bands = bandsForAges(kidAges());
+  const head = '<h2 class="h">Popular with families near you</h2>';
   if (!loc || !bands.length) {
-    el.innerHTML = `<h2 class="h">👨‍👩‍👧 Popular with families near you</h2>
-      <p class="meta">${!loc ? 'Set your area in <a href="#near">Near me</a>' : 'Add your kids\' ages in ⚙️ settings'} to see what families with kids the same age are doing nearby.</p>`;
+    el.innerHTML = `${head}<p class="meta">${!loc ? 'Set your area in <a href="#near">Near me</a>' : 'Add your kids\' ages in ⚙️ settings'} to see what families nearby enjoy.</p>`;
     return;
   }
-  el.innerHTML = '<h2 class="h">👨‍👩‍👧 Popular with families near you</h2><p class="meta">Loading…</p>';
   try {
     const t = await api.getTrends(cellFor(loc), bands);
     const acts = t.activities.map((x) => ({ a: byId[x.activity], n: x.families })).filter((x) => x.a);
     const where = loc.label === 'Your location' ? 'you' : esc(loc.label);
-    el.innerHTML = `<h2 class="h">👨‍👩‍👧 Popular with families near you</h2>
-      ${acts.length
-        ? `<p class="meta">What ${t.families} families with kids ${bands.map(bandLabel).join(' & ')} near ${where} shared in the last 30 days.</p>
-           ${acts.slice(0, 5).map(({ a, n }) => card(a, { compact: true, why: `${n} families did this` })).join('')}`
-        : `<p class="meta">Not enough families near ${where} have shared yet. We only show an activity once at least ${api.minFamilies()} families have done it, so nobody can be identified. When you save a memory, you can add it anonymously to help.</p>`}`;
+    el.innerHTML = head + (acts.length
+      ? `<p class="meta">Families with kids ${bands.map(bandLabel).join(' & ')} near ${where}, last 30 days</p>
+         <div class="pop-list">${acts.slice(0, 5).map(({ a, n }) => `<button class="pop-row" data-open="${a.id}"><span>${esc(a.emoji)} ${esc(a.title)}</span><span class="meta">${n} families did this</span></button>`).join('')}</div>`
+      : `<p class="meta">Not enough families near ${where} have shared yet. An activity shows up once at least ${api.minFamilies()} families have done it, so nobody can be identified.</p>`);
   } catch {
     el.innerHTML = '';
   }
@@ -449,7 +1243,8 @@ let nearState = { type: 'playground', radius: 5, places: null, error: null, load
 function renderNear(root) {
   const loc = S().location;
   root.innerHTML = `
-    <section class="hero"><h1>Things to do near me</h1>
+    <a class="back" href="#home">‹ Home</a>
+    <section class="hero"><h1>Places near us</h1>
       <p class="lede">Free, mostly outdoor places from open map data — no ads, no sponsored rankings.</p></section>
     <section class="card pad">
       <div class="row gap wrap">
@@ -527,12 +1322,14 @@ async function renderPlaces() {
 }
 
 // ---------------- Ideas library ----------------
-let ideaFilter = { cat: 'all', setting: 'all', q: '', forKids: true };
+let ideaFilter = { cat: 'all', setting: 'all', q: '', forKids: true, aud: 'all' };
 
 function renderIdeas(root) {
   const ages = kidAges();
   root.innerHTML = `
-    <section class="hero"><h1>Idea library</h1><p class="lede">${ACTIVITIES.length} screen-free activities, each with steps, materials and what kids learn.</p></section>
+    <a class="back" href="#home">‹ Home</a>
+    <section class="hero"><h1>All ideas</h1><p class="lede">${ACTIVITIES.length} screen-free family and kids activities.</p></section>
+    <div class="seg three" role="tablist">${[['all', 'All'], ['family', '👨‍👩‍👧 Family'], ['kids', '🧒 Kids']].map(([k, l]) => `<button role="tab" data-aud="${k}" class="${ideaFilter.aud === k ? 'on' : ''}" aria-selected="${ideaFilter.aud === k}">${l}</button>`).join('')}</div>
     <input class="input" id="q" type="search" placeholder="Search: slime, baking, rainy…" value="${esc(ideaFilter.q)}" aria-label="Search ideas" />
     <div class="chips-scroll">${[['all', '✨ All'], ...Object.entries(CATEGORIES).map(([k, c]) => [k, `${c.emoji} ${c.label}`]), ['favs', '♥ Saved']].map(([k, l]) => `<button class="chip-btn ${ideaFilter.cat === k ? 'on' : ''}" data-cat="${k}">${l}</button>`).join('')}</div>
     <div class="row gap wrap center-v">
@@ -543,6 +1340,7 @@ function renderIdeas(root) {
   const draw = () => {
     const q = ideaFilter.q.toLowerCase();
     const list = ACTIVITIES.filter((a) =>
+      (ideaFilter.aud === 'all' || audienceOf(a) === ideaFilter.aud) &&
       (ideaFilter.cat === 'all' || (ideaFilter.cat === 'favs' ? S().favs.includes(a.id) : a.cat === ideaFilter.cat)) &&
       (ideaFilter.setting === 'all' || a.setting === ideaFilter.setting) &&
       (!ages.length || !ideaFilter.forKids || fitsAges(a, ages)) &&
@@ -551,6 +1349,7 @@ function renderIdeas(root) {
   };
   $('#q', root).oninput = (e) => { ideaFilter.q = e.target.value; draw(); };
   $$('[data-cat]', root).forEach((b) => (b.onclick = () => { ideaFilter.cat = b.dataset.cat; renderIdeas(root); }));
+  $$('[data-aud]', root).forEach((b) => (b.onclick = () => { ideaFilter.aud = b.dataset.aud; renderIdeas(root); }));
   $('#setting', root).onchange = (e) => { ideaFilter.setting = e.target.value; draw(); };
   const fk = $('#forkids', root);
   if (fk) fk.onchange = (e) => { ideaFilter.forKids = e.target.checked; draw(); };
@@ -571,7 +1370,7 @@ function memoryForm({ activityId = null, title = '', date = store.isoDate(), onS
       <fieldset class="moods"><legend>How was it?</legend>${MOODS.map((m, i) => `<label><input type="radio" name="mood" value="${m}" ${i === 1 ? 'checked' : ''}/><span>${m}</span></label>`).join('')}</fieldset>
       <label>A moment to remember<textarea class="input" name="note" rows="3" placeholder="The bit you'll want to remember in 10 years…"></textarea></label>
       <label>Something they said <textarea class="input" name="quote" rows="2" placeholder="“Mummy, the clouds are having a party!”"></textarea></label>
-      <label class="file">📷 Add a photo (stays on your phone)<input type="file" name="photo" accept="image/*" /></label>
+      <label class="file">📷 Add a photo from your phone<span class="meta">Opens your Photos. A small copy is kept in LittleRoam on this phone only.</span><input type="file" name="photo" accept="image/*" /></label>
       ${canShare(activityId) ? `<label class="share"><input type="checkbox" name="share" ${S().shareNearby ? 'checked' : ''}/>
         <span>Add anonymously to “Popular near you”<small>Shares only the activity, your kids' age bands and a ~5 km area. No names, notes or photos.</small></span></label>` : ''}
       <button class="btn primary">Save memory</button>
@@ -615,9 +1414,10 @@ function renderMemories(root) {
   const weekendsOut = new Set(thisYear.filter((m) => [0, 6].includes(new Date(m.date + 'T12:00').getDay())).map((m) => { const d = new Date(m.date + 'T12:00'); d.setDate(d.getDate() - ((d.getDay() + 1) % 7)); return store.isoDate(d); })).size;
   const outdoors = thisYear.filter((m) => m.activityId && byId[m.activityId]?.setting !== 'home').length;
   root.innerHTML = `
-    <section class="hero"><h1>Our memories</h1><p class="lede">Private to your family. No likes, no followers, no comparing.</p></section>
+    <a class="back" href="#profile">‹ Profile</a>
+    <section class="hero"><h1>Past adventures</h1><p class="lede">Private to your family. No likes, no followers, no comparing.</p></section>
     <div class="grid three stats">
-      <div class="stat"><strong>${weekendsOut}</strong><span>weekends with an adventure</span></div>
+      <div class="stat"><strong>${weekendsOut}</strong><span>${weekendsOut === 1 ? 'weekend' : 'weekends'} with an adventure</span></div>
       <div class="stat"><strong>${thisYear.length}</strong><span>in ${year}</span></div>
       <div class="stat"><strong>${outdoors}</strong><span>outdoor adventures</span></div>
     </div>
@@ -672,54 +1472,42 @@ function recap(mems, year) {
 // ---------------- Settings, onboarding, Plus ----------------
 function settings() {
   const s = S();
-  openSheet(`<h2>Family settings</h2>
+  openSheet(`<h2>Your family</h2>
     <form id="fam" class="col gap">
       <label>Family name (optional)<input class="input" name="name" value="${esc(s.family.name)}" placeholder="e.g. Mathur" /></label>
       <fieldset><legend>Kids — birth years only, nothing else needed</legend><div id="kids" class="col gap-sm"></div>
         <button type="button" class="btn sm" id="add-kid">+ Add a child</button></fieldset>
       <button class="btn primary">Save</button>
     </form>
-    <hr/>
-    <h3>Your data</h3><p class="meta">Everything is stored only on this device. Back it up so you never lose your memories (photos are not included in the backup file).</p>
-    <div class="row gap wrap"><button class="btn" id="export">⬇ Export backup</button><label class="btn">⬆ Import<input type="file" id="import" accept="application/json" hidden /></label><button class="btn ghost danger" id="wipe">Erase everything</button></div>
-    <hr/><button class="btn ghost" id="plus-btn">✨ About LittleRoam Plus</button>`,
+`,
   (el) => {
     const kidsEl = $('#kids', el);
     const yr = new Date().getFullYear();
-    const row = (k = { name: '', birthYear: yr - 4 }) => {
-      kidsEl.insertAdjacentHTML('beforeend', `<div class="row gap kid"><input class="input grow" name="kname" placeholder="Nickname (optional)" value="${esc(k.name)}" aria-label="Nickname" />
+    const row = (k = { name: '', birthYear: yr - 4 }, idx = '') => {
+      kidsEl.insertAdjacentHTML('beforeend', `<div class="row gap kid" data-orig="${idx}"><input class="input grow" name="kname" placeholder="Nickname (optional)" value="${esc(k.name)}" aria-label="Nickname" />
         <select class="input sm" name="kyear" aria-label="Birth year">${Array.from({ length: 16 }, (_, i) => yr - i).map((y) => `<option ${Number(k.birthYear) === y ? 'selected' : ''}>${y}</option>`).join('')}</select>
         <button type="button" class="icon-btn" aria-label="Remove child">✕</button></div>`);
       const last = kidsEl.lastElementChild;
       $('button', last).onclick = () => last.remove();
     };
-    (s.family.kids.length ? s.family.kids : [undefined]).forEach((k) => row(k));
+    (s.family.kids.length ? s.family.kids : [undefined]).forEach((k, i) => row(k, k ? i : ''));
     $('#add-kid', el).onclick = () => row();
     $('#fam', el).onsubmit = (e) => {
       e.preventDefault();
-      const kids = $$('.kid', el).map((r) => ({ name: $('[name=kname]', r).value.trim(), birthYear: Number($('[name=kyear]', r).value) }));
-      store.set((st) => { st.family = { name: $('[name=name]', el).value.trim(), kids }; st.onboarded = true; });
+      const rows = $$('.kid', el);
+      const kids = rows.map((r) => ({ name: $('[name=kname]', r).value.trim(), birthYear: Number($('[name=kyear]', r).value) }));
+      // Classes and schools point at a child by position, so follow each child to their new place.
+      const moved = Object.fromEntries(rows.map((r, i) => [r.dataset.orig, String(i)]).filter(([o]) => o !== ''));
+      store.set((st) => {
+        st.family = { name: $('[name=name]', el).value.trim(), kids };
+        st.onboarded = true;
+        for (const c of st.classes) if (c.kid !== '' && c.kid != null) c.kid = moved[c.kid] ?? '';
+        st.schools = st.schools.filter((x) => moved[x.kid] != null).map((x) => ({ ...x, kid: moved[x.kid] }));
+      });
       closeSheet();
       toast('Saved');
       route();
     };
-    $('#export', el).onclick = () => {
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([store.exportJSON()], { type: 'application/json' }));
-      a.download = `littleroam-backup-${store.isoDate()}.json`;
-      a.click();
-    };
-    $('#import', el).onchange = async (e) => {
-      try { store.importJSON(await e.target.files[0].text()); toast('Backup restored'); closeSheet(); route(); } catch (err) { toast(err.message); }
-    };
-    $('#wipe', el).onclick = () => {
-      if (!confirm('Erase all plans, memories and settings on this device?')) return;
-      store.reset();
-      indexedDB.deleteDatabase('littleroam-photos');
-      location.hash = '';
-      location.reload();
-    };
-    $('#plus-btn', el).onclick = plus;
   });
 }
 
@@ -745,7 +1533,7 @@ function plus() {
 function onboarding() {
   openSheet(`<div class="onboard"><span class="big-emoji">🌱</span><h2>Welcome to LittleRoam</h2>
     <p class="lede">Your family's weekend, planned in a minute: around the kids' classes, with screen-free adventures in the free time.</p>
-    <ul class="list"><li>🗓️ Add swimming, football, ballet… once</li><li>✨ Free time filled with ideas that fit the weather</li><li>💛 Private weekend memories: no likes, no comparing</li></ul>
+    <ul class="list"><li>🗓️ Add swimming, football, ballet… once</li><li>🏫 Link school calendars to see days off</li><li>✨ Free time filled with ideas that fit the weather</li><li>💛 Private memories: no likes, no comparing</li></ul>
     <div class="row gap wrap"><button class="btn primary" id="ob-start">Add my kids' ages</button><button class="btn ghost" id="ob-skip">Skip for now</button></div></div>`,
   (el) => {
     $('#ob-start', el).onclick = settings;
@@ -758,24 +1546,27 @@ async function loadForecast() {
   if (!loc) return;
   try {
     forecast = await getForecast(loc);
-    if ($('main').dataset.view === 'weekend' && $('#sheet').hidden) renderWeekend($('#view'));
+    if (['home', 'weekend'].includes($('main').dataset.view) && $('#sheet').hidden) rerender();
   } catch { forecast = {}; }
 }
 
 // ---------------- Boot ----------------
-$('#settings-btn').onclick = settings;
 $('#sheet').addEventListener('click', (e) => { if (e.target.id === 'sheet') closeSheet(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); });
 window.addEventListener('hashchange', route);
+// If the phone's storage is full (or blocked, e.g. some private modes), say so instead of silently losing changes.
+store.subscribe(() => { if (store.lastSaveFailed()) toast("Couldn't save on this phone. Storage may be full or blocked (private browsing)."); });
 route();
 loadForecast();
 // Turn on AI and Popular-near-you once we know the server supports them.
-api.checkHealth().then(() => {
-  if ((api.aiEnabled() || api.communityEnabled()) && $('main').dataset.view === 'weekend' && $('#sheet').hidden) renderWeekend($('#view'));
+api.checkHealth().then(async () => {
+  for (const sc of S().schools) await refreshSchool(sc);
+  const v = $('main').dataset.view;
+  if ($('#sheet').hidden && ['home', 'weekend', 'chat', 'discover', 'profile'].includes(v)) rerender();
 });
 if (!S().onboarded && !location.hash.startsWith('#a/')) onboarding();
 
-if ('serviceWorker' in navigator && location.protocol === 'https:') {
+if ('serviceWorker' in navigator && window.isSecureContext) {
   navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
 

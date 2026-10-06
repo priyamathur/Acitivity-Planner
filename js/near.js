@@ -17,12 +17,47 @@ export const PLACE_TYPES = {
   treat:      { label: 'Ice cream', emoji: '🍦', filters: ['["amenity"="ice_cream"]', '["shop"="ice_cream"]'], pair: null },
 };
 
+// Where kids' classes happen. OpenStreetMap knows the venues, not their timetables,
+// so the app links to each venue's website and the chat can look up class times.
+export const CLASS_TYPES = {
+  swimming:  { label: 'Swimming', emoji: '🏊', title: 'Swimming', filters: ['["leisure"="swimming_pool"]["name"]', '["leisure"="sports_centre"]["sport"~"swimming"]'] },
+  dance:     { label: 'Dance', emoji: '🩰', title: 'Dance', filters: ['["leisure"="dance"]', '["amenity"="dancing_school"]'] },
+  martial:   { label: 'Martial arts', emoji: '🥋', title: 'Martial arts', filters: ['["amenity"="dojo"]', '["sport"~"martial_arts|karate|judo|taekwondo|jiu-jitsu|aikido"]'] },
+  music:     { label: 'Music', emoji: '🎹', title: 'Music lessons', filters: ['["amenity"="music_school"]'] },
+  art:       { label: 'Art & craft', emoji: '🎨', title: 'Art class', filters: ['["amenity"="arts_centre"]', '["craft"="pottery"]["name"]'] },
+  sports:    { label: 'Sports clubs', emoji: '⚽', title: 'Sports club', filters: ['["club"="sport"]', '["leisure"="sports_centre"]["name"]'] },
+  community: { label: 'Community centres', emoji: '🏘️', title: 'Class', filters: ['["amenity"="community_centre"]', '["amenity"="library"]'] },
+};
+
+const typeDef = (type) => PLACE_TYPES[type] || CLASS_TYPES[type];
+
 const OVERPASS = 'https://overpass-api.de/api/interpreter';
 
 export function buildQuery(type, lat, lon, radiusM) {
-  const t = PLACE_TYPES[type];
+  const t = typeDef(type);
   const parts = t.filters.map((f) => `nwr${f}(around:${radiusM},${lat},${lon});`).join('');
   return `[out:json][timeout:25];(${parts});out center tags 80;`;
+}
+
+// Map data is user-edited: only plain web links are ever shown (no javascript: etc.).
+// fetch() with a message a parent can act on when the phone is offline or the server is unreachable.
+async function net(url, opts) {
+  try {
+    return await fetch(url, opts);
+  } catch (e) {
+    if (e.name === 'AbortError') throw e;
+    throw new Error(navigator.onLine === false ? "You're offline. Places need an internet connection; your plans and ideas still work." : "Couldn't reach the map service. Check your connection and try again.");
+  }
+}
+
+export function safeWebsite(raw) {
+  if (typeof raw !== 'string') return null;
+  const v = raw.trim().split(';')[0].trim();
+  const withScheme = /^[a-z][a-z0-9+.-]*:/i.test(v) ? v : `https://${v}`;
+  try {
+    const u = new URL(withScheme);
+    return /^https?:$/.test(u.protocol) && u.hostname.includes('.') ? u.href : null;
+  } catch { return null; }
 }
 
 export function parsePlaces(json, origin, type) {
@@ -34,7 +69,7 @@ export function parsePlaces(json, origin, type) {
       const tags = e.tags || {};
       if (lat == null || lon == null) return null;
       if (tags.access === 'private' || tags.access === 'no') return null;
-      const name = tags.name || tags['name:en'] || `Unnamed ${PLACE_TYPES[type].label.toLowerCase().replace(/s$/, '')}`;
+      const name = tags.name || tags['name:en'] || `Unnamed ${typeDef(type).label.toLowerCase().replace(/s$/, '')}`;
       return {
         id: `${e.type}/${e.id}`,
         name,
@@ -42,7 +77,7 @@ export function parsePlaces(json, origin, type) {
         type,
         lat, lon,
         km: haversineKm(origin, { lat, lon }),
-        website: tags.website || tags['contact:website'] || null,
+        website: safeWebsite(tags.website || tags['contact:website']),
         hours: tags.opening_hours || null,
         fee: tags.fee || null,
         wheelchair: tags.wheelchair || null,
@@ -54,15 +89,15 @@ export function parsePlaces(json, origin, type) {
     .sort((a, b) => Number(b.named) - Number(a.named) || a.km - b.km);
 }
 
-export async function findPlaces(type, origin, radiusKm = 5, { signal } = {}) {
+export async function findPlaces(type, origin, radiusKm = 5, { signal, endpoint = OVERPASS } = {}) {
   const body = 'data=' + encodeURIComponent(buildQuery(type, origin.lat, origin.lon, Math.round(radiusKm * 1000)));
-  const res = await fetch(OVERPASS, { method: 'POST', body, headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal });
+  const res = await net(endpoint, { method: 'POST', body, headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal });
   if (!res.ok) throw new Error(`Place search failed (${res.status}). The free map server may be busy — try again in a minute.`);
   return parsePlaces(await res.json(), origin, type);
 }
 
 export async function geocode(q) {
-  const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`, { headers: { Accept: 'application/json' } });
+  const res = await net(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`, { headers: { Accept: 'application/json' } });
   if (!res.ok) throw new Error('Location search failed.');
   const [hit] = await res.json();
   if (!hit) throw new Error(`Couldn't find "${q}". Try a city or postcode.`);

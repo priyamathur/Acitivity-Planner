@@ -1,12 +1,12 @@
 {
-  "name": "LittleRoam — Family Weekend Planner",
+  "name": "LittleRoam — Family & Kids Activities",
   "short_name": "LittleRoam",
   "description": "Plan your family weekend around the kids' classes, with screen-free adventures in the free time.",
-  "start_url": "./#weekend",
+  "start_url": "./#home",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#fbf8f2",
-  "theme_color": "#2f6b4f",
+  "background_color": "#FFFFFF",
+  "theme_color": "#FFFFFF",
   "orientation": "portrait",
   "categories": ["lifestyle", "parenting", "education"],
   "icons": [
@@ -17,7 +17,7 @@
   ],
   "shortcuts": [
     { "name": "Things to do near me", "url": "./#near" },
-    { "name": "This weekend", "url": "./#weekend" },
-    { "name": "Save a memory", "url": "./#memories" }
+    { "name": "Plan the weekend", "url": "./#weekend" },
+    { "name": "Ask LittleRoam", "url": "./#chat" }
   ]
 }

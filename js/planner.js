@@ -108,9 +108,9 @@ export function haversineKm(a, b) {
 // ======================= Weekend planning =======================
 
 export const VIBES = {
-  adventure: { label: 'Big adventure', emoji: '🗺️', desc: 'Get out and explore' },
-  mix: { label: 'A bit of both', emoji: '⚖️', desc: 'One outing, one cosy time' },
-  cosy: { label: 'Cosy & slow', emoji: '🛋️', desc: 'Mostly home and close by' },
+  adventure: { label: 'Adventure', emoji: '🗺️', desc: 'Get out and explore' },
+  mix: { label: 'Mix', emoji: '⚖️', desc: 'One outing, one cosy time' },
+  cosy: { label: 'Cosy', emoji: '🛋️', desc: 'Mostly home and close by' },
 };
 
 export const DAY = { start: 9 * 60, end: 18 * 60, lunch: [12 * 60 + 30, 13 * 60 + 30] };
@@ -128,27 +128,36 @@ const iso = (d) => {
   return z.toISOString().slice(0, 10);
 };
 
-// The weekend to plan. On a Saturday or Sunday "this weekend" is the current one
-// (days already over are marked past); otherwise it's the coming one.
-export function weekendDays(now = new Date(), offset = 0) {
+export const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+export const DAY_NAMES = { mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday', sun: 'Sunday' };
+
+// The Monday–Sunday week around the weekend being planned. On a Saturday or
+// Sunday "this week" is the current one (days already over are marked past);
+// on a weekday it's the week ending in the coming weekend.
+export function weekDays(now = new Date(), offset = 0) {
   const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const dow = d.getDay(); // 0 Sun … 6 Sat
-  const sat = new Date(d);
-  sat.setDate(d.getDate() + (dow === 0 ? -1 : 6 - dow) + offset * 7);
-  const sun = new Date(sat);
-  sun.setDate(sat.getDate() + 1);
+  const mon = new Date(d);
+  mon.setDate(d.getDate() - ((dow + 6) % 7) + offset * 7);
   const today = iso(d);
-  return [
-    { key: 'sat', name: 'Saturday', date: iso(sat), past: iso(sat) < today },
-    { key: 'sun', name: 'Sunday', date: iso(sun), past: iso(sun) < today },
-  ];
+  return DAY_KEYS.map((key, i) => {
+    const day = new Date(mon);
+    day.setDate(mon.getDate() + i);
+    const date = iso(day);
+    return { key, name: DAY_NAMES[key], date, past: date < today, today: date === today, weekend: i >= 5 };
+  });
 }
 
+export const weekendDays = (now = new Date(), offset = 0) => weekDays(now, offset).slice(5);
+
+// The days a class happens on (older saves stored a single `day`).
+export const classDays = (c) => (Array.isArray(c.days) && c.days.length ? c.days : c.day ? [c.day] : []);
+
 // Classes and one-off plans that happen on this day.
-// class: { id, title, kid, day: 'sat'|'sun', start: 'HH:MM', end: 'HH:MM', where, repeat: 'weekly'|'once', date?, skip?: {date: true} }
+// class: { id, title, kid, days: ['tue', 'thu'], start: 'HH:MM', end: 'HH:MM', where, repeat: 'weekly'|'once', date?, skip?: {date: true} }
 export function bookedFor(classes, day) {
   return classes
-    .filter((c) => c.day === day.key && (c.repeat === 'once' ? c.date === day.date : !c.skip?.[day.date]))
+    .filter((c) => (c.repeat === 'once' ? c.date === day.date : classDays(c).includes(day.key) && !c.skip?.[day.date]))
     .map((c) => ({ ...c, s: toMin(c.start), e: toMin(c.end) }))
     .filter((c) => c.e > c.s)
     .sort((a, b) => a.s - b.s);
@@ -217,4 +226,10 @@ const CLASS_KINDS = [
 export function classKind(title) {
   const k = CLASS_KINDS.find(([re]) => re.test(title));
   return k ? { emoji: k[1], kind: k[2] } : { emoji: '📌', kind: 'Booked' };
+}
+
+// Who an activity is mainly for: something the family does together (outings,
+// connection, nature), or kids' own play (sensory, art, STEM, movement, life skills).
+export function audienceOf(a) {
+  return a.setting === 'out' || a.cat === 'together' || a.cat === 'nature' ? 'family' : 'kids';
 }

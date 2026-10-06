@@ -3,12 +3,16 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "LittleRoam — a screen-free family activity planner (static PWA, no build step).",
+  "description": "LittleRoam \u2014 a screen-free family activity planner (static PWA, no build step).",
   "scripts": {
     "start": "python3 -m http.server 8080",
-    "test": "node --test tests/unit.test.js tests/ai.test.js",
+    "test": "node --test tests/unit.test.js tests/ai.test.js tests/school.test.js",
     "test:api": "node tests/api.test.mjs",
     "test:e2e": "node tests/e2e.mjs",
-    "test:e2e-ai": "node tests/e2e-ai.mjs"
+    "test:e2e-ai": "node tests/e2e-ai.mjs",
+    "test:e2e-chat": "node tests/e2e-chat.mjs",
+    "test:mcp": "node tests/mcp.test.mjs",
+    "test:audit": "node tests/audit.mjs",
+    "test:resilience": "node tests/resilience.mjs"
   }
 }
