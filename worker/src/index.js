@@ -1,11 +1,13 @@
 // LittleRoam API. Static files are served from ./_site by Cloudflare's assets
 // layer; anything that isn't a file (i.e. /api/*) reaches this handler.
 import { ACTIVITIES } from '../../js/data.js';
-import { isValidCell, isValidBand, neighbourCells } from '../../js/community.js';
+import { isValidCell, isValidBand, neighbourCells, cellFor } from '../../js/community.js';
 import { suggest, AIError } from './ai.js';
 import { chatStep, validMessages, isNewUserTurn } from './chat.js';
 import { handleMcp } from './mcp.js';
-import { fetchICS, datesFromPhoto } from './school.js';
+import { fetchICS, datesFromPhoto, discoverFeed, searchSchoolCalendar, feedUrlOk } from './school.js';
+import { findSchools, safeWebsite } from '../../js/near.js';
+import { parseICS, cleanEvents, schoolKey } from '../../js/school.js';
 
 export { Community } from './community.js';
 
@@ -49,7 +51,7 @@ export default {
 
     try {
       if (url.pathname === '/api/health') {
-        return json({ ok: true, ai: Boolean(env.ANTHROPIC_API_KEY), chat: Boolean(env.ANTHROPIC_API_KEY), community: true, schoolFeeds: true, schoolPhoto: Boolean(env.ANTHROPIC_API_KEY), aiDailyLimit: Number(env.AI_DAILY_LIMIT || 5), chatDailyLimit: Number(env.CHAT_DAILY_LIMIT || 20), minFamilies: Number(env.MIN_FAMILIES || 3) });
+        return json({ ok: true, ai: Boolean(env.ANTHROPIC_API_KEY), chat: Boolean(env.ANTHROPIC_API_KEY), community: true, schoolFeeds: true, schoolPhoto: Boolean(env.ANTHROPIC_API_KEY), schoolFinder: true, schoolSearch: Boolean(env.ANTHROPIC_API_KEY), aiDailyLimit: Number(env.AI_DAILY_LIMIT || 5), chatDailyLimit: Number(env.CHAT_DAILY_LIMIT || 20), minFamilies: Number(env.MIN_FAMILIES || 3) });
       }
 
       // Anonymous "we did this" signal for Popular near you.
@@ -164,12 +166,89 @@ export default {
         const usage = await community.consume([{ key: `s:${ip}`, limit: Number(env.SCHOOL_FEED_DAILY_LIMIT || 60) }]);
         if (!usage.ok) return bad('Too many calendar refreshes today. Try again tomorrow.', 429);
         try {
-          const text = await fetchICS(url.searchParams.get('url'));
+          const text = await fetchICS(url.searchParams.get('url'), { allowOrigin: env.SCHOOL_FETCH_TEST_ORIGIN || '' });
           return new Response(text, { headers: { 'content-type': 'text/calendar; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; sandbox" } });
         } catch (err) {
           if (err instanceof AIError) return bad(err.message, err.status);
           throw err;
         }
+      }
+
+      // Find schools (and preschools) by name near the family's area, from OpenStreetMap.
+      if (url.pathname === '/api/schools' && request.method === 'GET') {
+        const q = (url.searchParams.get('q') || '').trim().slice(0, 80);
+        const lat = Number(url.searchParams.get('lat'));
+        const lon = Number(url.searchParams.get('lon'));
+        if (q.length < 2 || !Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return bad('Type at least 2 letters of the school name.');
+        const ip = await sha256(request.headers.get('cf-connecting-ip') || 'local');
+        if (!(await community.consume([{ key: `ss:${ip}`, limit: 200 }])).ok) return bad('Too many searches today. Try again tomorrow.', 429);
+        try {
+          return json({ schools: await findSchools(q, { lat, lon }, { endpoint: env.OVERPASS_URL || undefined }) });
+        } catch (e) {
+          return bad(e.message, 502);
+        }
+      }
+
+      // Find a school's calendar automatically: cached → feed on its website → Claude web search.
+      if (url.pathname === '/api/school-calendar' && request.method === 'POST') {
+        const b = await readJSON(request);
+        // One line each: these go into the AI prompt, so no line breaks or control characters.
+        const line = (v, n) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, n) : '');
+        const name = line(b.name, 100);
+        const town = line(b.town, 60);
+        const district = line(b.district, 80);
+        const lat = Number(b.lat);
+        const lon = Number(b.lon);
+        if (!famOk(b.fam) || name.length < 2 || !Number.isFinite(lat) || !Number.isFinite(lon)) return bad('invalid request');
+        const today = /^\d{4}-\d{2}-\d{2}$/.test(b.today || '') ? b.today : new Date().toISOString().slice(0, 10);
+        const allowOrigin = env.SCHOOL_FETCH_TEST_ORIGIN || '';
+        const website = allowOrigin && String(b.website || '').startsWith(allowOrigin + '/') ? b.website : safeWebsite(b.website);
+        // The shared cache is keyed on everything that shapes the answer (name, area, website, town,
+        // district), so one family's request can never change what another family is shown.
+        const key = `${schoolKey(name, cellFor({ lat, lon }))}|${website ? new URL(website).host : '-'}|${await sha256(`${town.toLowerCase()}|${district.toLowerCase()}`)}`;
+        const asFeed = async (feedUrl, extra = {}) => ({ status: 'feed', url: feedUrl, events: parseICS(await fetchICS(feedUrl, { allowOrigin }), { today }), ...extra });
+
+        // 1) Another family already found this school's calendar.
+        const cached = await community.schoolGet(key, 14 * 86400000);
+        if (cached?.type === 'feed') { try { return json(await asFeed(cached.url, { cached: true })); } catch { /* feed moved: look again */ } }
+        if (cached?.type === 'search') return json({ status: 'search', events: cleanEvents(cached.events, { today }), sources: cached.sources, page: cached.page, note: cached.note, cached: true });
+
+        // 2) A calendar feed linked from the school's own website.
+        const found = website ? await discoverFeed(website, { today, allowOrigin }) : null;
+        if (found?.url) {
+          await community.schoolPut(key, { type: 'feed', url: found.url });
+          return json({ status: 'feed', url: found.url, events: found.events, page: found.page });
+        }
+
+        // 3) Claude searches the web for the official calendar.
+        if (!env.ANTHROPIC_API_KEY) return json({ status: 'none', page: found?.page || website || null, reason: 'no-ai' });
+        const ip = await sha256(request.headers.get('cf-connecting-ip') || 'local');
+        const limit = Number(env.AI_DAILY_LIMIT || 5);
+        const keys = [{ key: `sc:${await sha256(b.fam)}`, limit }, { key: `sci:${ip}`, limit: limit * 6 }];
+        const usage = await community.consume(keys);
+        if (!usage.ok) return json({ error: `You've used today's ${limit} automatic school lookups. Try again tomorrow, or paste the school's calendar link.` }, 429);
+        let r;
+        try {
+          r = await searchSchoolCalendar(env, { name, town, district, website, grade: /^(prek|k|[1-9]|1[0-2])$/.test(b.grade || '') ? b.grade : '', today });
+        } catch (err) {
+          await community.refund(keys.map((k) => k.key));
+          if (err instanceof AIError) return bad(err.message, err.status);
+          throw err;
+        }
+        if (r.feed_url && feedUrlOk(r.feed_url, { allowOrigin })) {
+          try {
+            const out = await asFeed(r.feed_url, { page: r.calendar_page || null, note: r.note });
+            if (out.events.length) { await community.schoolPut(key, { type: 'feed', url: out.url }); return json(out); }
+          } catch { /* fall back to the dates it read */ }
+        }
+        const sources = (Array.isArray(r.sources) ? r.sources : []).map((u) => safeWebsite(u)).filter(Boolean).slice(0, 5);
+        const events = cleanEvents(r.events, { today });
+        if (r.found && events.length && sources.length) {
+          const page = safeWebsite(r.calendar_page) || sources[0];
+          await community.schoolPut(key, { type: 'search', events, sources, page, note: String(r.note || '').slice(0, 300) });
+          return json({ status: 'search', events, sources, page, note: String(r.note || '').slice(0, 300), school: String(r.school || '').slice(0, 120) });
+        }
+        return json({ status: 'none', page: safeWebsite(r.calendar_page) || found?.page || website || null, note: String(r.note || '').slice(0, 300) });
       }
 
       // Read school dates off a photo of a newsletter or printed calendar.

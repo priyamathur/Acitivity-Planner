@@ -31,7 +31,10 @@ page.on('pageerror', (e) => errors.push(e.message));
 page.on('console', (m) => m.type() === 'error' && !/\/api\/health|blocked\.example/.test(m.location()?.url || '') && errors.push(m.text()));
 
 const overpassQueries = [];
-await page.route('https://overpass-api.de/**', (r) => (overpassQueries.push(r.request().postData()), r.fulfill({ json: { elements: [
+await page.route('https://overpass-api.de/**', (r) => (overpassQueries.push(r.request().postData()), /amenity.*school/.test(decodeURIComponent(r.request().postData() || '')) ? r.fulfill({ json: { elements: [
+  { type: 'way', id: 21, center: { lat: 47.55, lon: -122.02 }, tags: { name: 'Grand Ridge Elementary School', amenity: 'school', website: 'https://grandridge.example.org', operator: 'Issaquah School District', 'addr:city': 'Issaquah' } },
+  { type: 'node', id: 22, lat: 47.54, lon: -122.03, tags: { name: 'Grand Ridge Plaza Daycare', amenity: 'childcare' } },
+] } }) : r.fulfill({ json: { elements: [
   { type: 'node', id: 11, lat: 47.607, lon: -122.333, tags: { name: 'Pioneer Square Playground', wheelchair: 'yes' } },
   { type: 'way', id: 12, center: { lat: 47.62, lon: -122.35 }, tags: { name: 'Seattle Center Playground', website: 'https://example.org' } },
 ] } })));
@@ -293,8 +296,49 @@ try {
   if ((await page.locator(`.pin[data-id="${savedId}"] .pin-fav`).getAttribute('aria-pressed')) !== 'true') fail('heart did not toggle');
   await page.locator(`.pin[data-id="${savedId}"] .pin-main`).click();
   await page.locator('#sheet-body').getByRole('heading', { level: 2 }).waitFor();
+  // Save from inside an idea's details too.
+  await page.locator('#sheet-body').getByRole('button', { name: '♡ Save' }).waitFor().catch(async () => {
+    // already saved from the card → the sheet says so
+    await page.locator('#sheet-body').getByRole('button', { name: '♥ Saved' }).waitFor();
+  });
   await page.keyboard.press('Escape');
+  const other = (await pinIds()).find((id) => id !== savedId);
+  await page.locator(`.pin[data-id="${other}"] .pin-main`).click();
+  await page.locator('#sheet-body').getByRole('button', { name: '♡ Save' }).click();
+  await page.locator('#sheet-body').getByRole('button', { name: '♥ Saved' }).waitFor();
+  await page.getByText('Saved ♥ Find it in Discover → Saved').waitFor();
+  await page.keyboard.press('Escape');
+
+  // ---------- Saved ideas: easy to find again ----------
+  const savedNow = await page.evaluate(() => window.__littleroam.store.get().favs);
+  if (savedNow.length !== 3 || !savedNow.includes('volcano')) fail('expected 3 saved ideas: ' + savedNow);
+  await page.getByRole('tab', { name: '♥ Saved (3)' }).click();
+  const savedPins = await pinIds();
+  if (savedPins.length !== 3 || savedPins[0] !== other) fail(`Saved shows the 3 saved ideas, newest first: ${savedPins}`);
+  await page.getByText('Saved on this phone.').waitFor();
+  // Un-save from the Saved list removes it there.
+  await page.locator('.pin[data-id="volcano"] .pin-fav').click();
+  await page.waitForFunction(() => !document.querySelector('.pin[data-id="volcano"]'));
+  await page.getByRole('tab', { name: '♥ Saved (2)' }).waitFor();
+  // The feed shows new ideas: what's saved isn't repeated under For you.
+  await page.getByRole('tab', { name: 'For you' }).click();
+  for (const id of await pinIds()) if ([savedId, other].includes(id)) fail('saved ideas should not fill the For you feed');
+  // Profile → Saved ideas opens the list.
+  await page.locator('.tabbar').getByRole('link', { name: 'Profile' }).click();
+  await page.locator('#saved-row').getByText('2 ›').waitFor();
+  await page.locator('#saved-row').click();
+  await page.getByRole('heading', { name: 'Discover', exact: true }).waitFor();
+  if ((await page.getByRole('tab', { name: /Saved/ }).getAttribute('aria-selected')) !== 'true') fail('Profile → Saved ideas should open the Saved list');
+
+  // ---------- Taste: saving several of one kind shapes the feed ----------
+  const artIds = await page.evaluate(async () => { const { ACTIVITIES } = await import('./js/data.js'); return ACTIVITIES.filter((a) => a.cat === 'art' && a.ages[0] <= 5 && a.ages[1] >= 8).map((a) => a.id).slice(0, 4); });
+  await page.evaluate((ids) => window.__littleroam.store.set((s) => { s.favs = [...new Set([...s.favs, ...ids])]; }), artIds);
+  await page.getByRole('tab', { name: 'For you' }).click();
+  await page.locator('#taste-line').getByText(/Make & create/).waitFor();
+  if (!(await page.locator('.pin .pin-why').allInnerTexts()).some((t) => /^Because you saved /.test(t))) fail('expected a "Because you saved …" reason in the feed');
   await page.screenshot({ path: `${SHOTS}/10-discover.png`, fullPage: true });
+  // Undo so later checks see the earlier state.
+  await page.evaluate((ids) => window.__littleroam.store.set((s) => { s.favs = s.favs.filter((x) => !ids.includes(x)); }), artIds);
 
   // ---------- Profile ----------
   await page.locator('.tabbar').getByRole('link', { name: 'Profile' }).click();
@@ -319,18 +363,32 @@ try {
     'BEGIN:VEVENT', 'DTSTART:20261014T133000', 'DTEND:20261014T150000', 'SUMMARY:Early Release', 'END:VEVENT',
     'BEGIN:VEVENT', 'DTSTART;VALUE=DATE:20261013', 'SUMMARY:Picture Day', 'END:VEVENT',
     'BEGIN:VEVENT', 'DTSTART;VALUE=DATE:20261111', 'SUMMARY:Veterans Day - No School', 'END:VEVENT',
+    'BEGIN:VEVENT', 'DTSTART;VALUE=DATE:20261016', 'SUMMARY:No school for kindergarten - conferences', 'END:VEVENT',
     'END:VCALENDAR'].join('\r\n');
   await page.route('https://calendar.grandridge.example/**', (r) => r.fulfill({ contentType: 'text/calendar', headers: { 'access-control-allow-origin': '*' }, body: GR_ICS }));
   await page.route('https://school.example/page', (r) => r.fulfill({ contentType: 'text/html', headers: { 'access-control-allow-origin': '*' }, body: '<html>Calendar</html>' }));
   await page.route('https://blocked.example/**', (r) => r.abort());
   await page.locator('.kid-row', { hasText: 'Leo · 8' }).getByRole('button', { name: 'Link school' }).click();
   await page.getByRole('heading', { name: "Link Leo's school" }).waitFor();
+  // Find the school by name + grade (grade guessed from age, parent can change it).
+  if ((await page.inputValue('[name=grade]')) !== '3') fail('grade should be guessed from age 8 as Grade 3');
+  await page.getByRole('button', { name: 'Find school' }).click();
+  await page.getByText('Add the school name first.').waitFor();
+  await page.fill('[name=school]', 'Grandridge elementary issaquah');
+  await page.getByRole('button', { name: 'Find school' }).click();
+  await page.getByText('Which one is it?').waitFor();
+  const hits = await page.locator('.school-hit').allInnerTexts();
+  if (!hits[0].includes('Grand Ridge Elementary School') || !hits[0].includes('Issaquah School District')) fail('best match should be first: ' + hits[0]);
+  if (!hits.at(-1).includes('Not listed? Use “Grandridge elementary issaquah”')) fail('should offer to use the typed name');
+  if (!decodeURIComponent(overpassQueries.at(-1)).includes('g ?r ?a ?n ?d ?r ?i ?d ?g ?e')) fail('school search should ignore spacing');
+  await page.locator('.school-hit').first().click();
+  // Static hosting: no server to look the calendar up, so it says so and offers the other ways.
+  await page.getByText(/needs the full version of LittleRoam/).waitFor();
+  if ((await page.getByRole('link', { name: /Open the school's calendar page/ }).getAttribute('href')) !== 'https://grandridge.example.org/') fail('should link the school website');
+  if (!(await page.locator('#other-ways').evaluate((d) => d.open))) fail('other ways should open');
   // Photo reading needs AI: explained, not offered.
   await page.getByText(/Reading photos uses AI/).waitFor();
   if (await page.locator('#photo-file').count()) fail('photo option shown without AI');
-  await page.fill('[name=url]', 'https://calendar.grandridge.example/feed.ics');
-  await page.getByRole('button', { name: 'Link', exact: true }).click();
-  await page.getByText('Add the school name first.').waitFor();
   await page.fill('[name=school]', 'Grand Ridge Elementary');
   await page.fill('[name=url]', 'not a link');
   await page.getByRole('button', { name: 'Link', exact: true }).click();
@@ -349,6 +407,14 @@ try {
   if (!coming[0].includes('No School - Professional Learning Day') || !coming[0].includes('No school')) fail('first coming-up date should be the day off: ' + coming[0]);
   if (!coming.some((t) => t.includes('Early release'))) fail('early release not recognised');
   if ((await page.evaluate(() => window.__littleroam.store.get().schools[0].url)) !== 'https://calendar.grandridge.example/feed.ics') fail('webcal link should be stored as https');
+  if ((await page.evaluate(() => window.__littleroam.store.get().schools[0].grade)) !== '3') fail('grade should be saved with the school');
+  if (coming.some((t) => t.includes('kindergarten'))) fail('a kindergarten-only day off should not show for Grade 3');
+  // Change the grade: the kindergarten day now applies.
+  await page.selectOption('#sc-grade', 'k');
+  await page.getByText(/5 upcoming dates/).first().waitFor();
+  await page.locator('#sheet-body .cls-row', { hasText: 'No school for kindergarten' }).waitFor();
+  await page.selectOption('#sc-grade', '3');
+  await page.getByText(/4 upcoming dates/).first().waitFor();
   await page.keyboard.press('Escape');
   await page.locator('.kid-row', { hasText: 'Leo · 8' }).getByText(/Calendar linked/).waitFor();
   await page.screenshot({ path: `${SHOTS}/11-profile.png`, fullPage: true });

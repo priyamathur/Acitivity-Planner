@@ -16,6 +16,20 @@ export class Community extends DurableObject {
     this.sql.exec('CREATE INDEX IF NOT EXISTS events_cell_day ON events (cell, day)');
     this.sql.exec(`CREATE TABLE IF NOT EXISTS ai_usage (
       day TEXT NOT NULL, key TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, key))`);
+    // Where each school's public calendar lives (a feed link, or official dates found by search).
+    // Public school information only: no family, child or device is stored with it.
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS school_cache (
+      key TEXT PRIMARY KEY, data TEXT NOT NULL, updated INTEGER NOT NULL)`);
+  }
+
+  schoolGet(key, maxAgeMs) {
+    const row = this.sql.exec('SELECT data, updated FROM school_cache WHERE key = ?', key).toArray()[0];
+    return row && Date.now() - row.updated < maxAgeMs ? JSON.parse(row.data) : null;
+  }
+
+  schoolPut(key, data) {
+    this.sql.exec('INSERT INTO school_cache (key, data, updated) VALUES (?, ?, ?) ON CONFLICT (key) DO UPDATE SET data = excluded.data, updated = excluded.updated', key, JSON.stringify(data), Date.now());
+    return { ok: true };
   }
 
   // One row per family, per activity, per age band, per day. Re-sharing the same thing is a no-op.

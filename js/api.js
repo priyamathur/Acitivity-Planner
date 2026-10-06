@@ -60,3 +60,13 @@ export async function fetchSchoolFeed(url) {
   }
   return text;
 }
+
+export const schoolFinderEnabled = () => Boolean(health?.ok && health.schoolFinder);
+export const findSchoolCalendar = (body) => call('school-calendar', { method: 'POST', body: JSON.stringify(body) });
+
+// Schools by name near home: through our server when there is one, else straight from OpenStreetMap.
+export async function searchSchools(q, where) {
+  if (schoolFinderEnabled()) return (await call(`schools?q=${encodeURIComponent(q)}&lat=${where.lat}&lon=${where.lon}`)).schools;
+  const { findSchools } = await import('./near.js');
+  return findSchools(q, where);
+}

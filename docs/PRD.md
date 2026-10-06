@@ -9,6 +9,14 @@
 
 ---
 
+## 0c. Decision log v3.2: find the school by name; saved ideas that teach the app
+- **Linking a school = type its name and the child's grade.** Most parents can't find a downloadable calendar, so the app does the finding:
+  1. search schools and preschools by name near home (OpenStreetMap; spacing and an added town are tolerated: "Grandridge elementary issaquah" finds "Grand Ridge Elementary School");
+  2. look on the school's website for a calendar feed (iCal / webcal / Google Calendar), checking up to 3 calendar pages;
+  3. if there's none, Claude searches the web for the official school or district calendar and reads the dates; the parent checks them before saving.
+  The result is cached for the next family at that school (public school data only). The grade filters district calendars to what applies ("No school for kindergarten" only shows for kindergarten).
+- **Saved ideas live in Discover → ♥ Saved** (and Profile → Saved ideas), with a Save button inside every idea. Saving now *teaches* the recommendations: saves, completed activities (😍 counts most) and swaps build a taste profile on the phone that lifts similar ideas everywhere (Discover, Plan, weekend plans) and explains itself ("Because you saved Kitchen volcano"). The feed keeps variety and stops showing what's already saved.
+
 ## 0b. Decision log v3.1: three tabs and school calendars
 - **Three tabs: Plan · Discover · Profile.** *Plan* is Home (Family | Kids, ask bar, the weekend). *Discover* is a Pinterest-style feed matched to the kids' ages, the area, the weather and school days off, with real anonymous "families near you" picks first. *Profile* holds the family, kids and schools, the home area, sharing, past adventures, the MCP connector, backup and Plus. (This replaces v3.0's "no tabs" decision after user feedback.)
 - **Visual design** follows the approved Claude Design canvas: white canvas, one green accent, apricot "Plan the weekend" card, Bricolage Grotesque + DM Sans.

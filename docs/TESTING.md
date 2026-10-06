@@ -1,11 +1,11 @@
 # LittleRoam: test report
 
 **Last run:** 7 Oct 2026 (the browser tests pin the date to Wednesday 7 Oct 2026, so this weekend is 10–11 Oct)
-**Result:** ✅ all suites pass: 28 unit tests, 5 end-to-end suites, plus a production audit and a resilience suite. CI runs every suite on every PR and on every push to `main`.
+**Result:** ✅ all suites pass: 32 unit tests, 5 end-to-end suites, plus a production audit and a resilience suite. CI runs every suite on every PR and on every push to `main`.
 
 | Suite | Command | What it runs | Result |
 |---|---|---|---|
-| Unit | `npm test` | Planning engine, privacy helpers, AI output validation, school calendar parsing, safe loading of saved data, safe map links (Node) | ✅ 28 / 28 |
+| Unit | `npm test` | Planning engine, privacy helpers, AI output validation, school calendar parsing, safe loading of saved data, safe map links (Node) | ✅ 32 / 32 |
 | API | `npm run test:api` | The real server (Cloudflare Worker via `wrangler dev`) with a mock Claude API | ✅ |
 | Browser, no server | `npm run test:e2e` | Full app in Chromium, as hosted on GitHub Pages (no AI) | ✅ |
 | Browser, AI planning | `npm run test:e2e-ai` | App + server + mock Claude: AI weekend plan, Popular near you | ✅ |
@@ -29,6 +29,22 @@
 - [x] With the server: real "N families near you did this" picks lead the feed and aren't repeated
 - [x] Profile: family, kids, share toggle saved, MCP address (or an explanation on static hosting), backup, Plus
 - [x] No sideways scrolling on Home, Discover, Profile, Weekend, Ideas, Past adventures; dark mode screenshots
+
+### Find a school by name + grade (v3.2)
+- [x] "Grandridge elementary issaquah" (no space, town added) finds Grand Ridge Elementary first, with its district; "Not listed? Use …" is always offered
+- [x] Grade is guessed from age (8 → Grade 3, 5 → Kindergarten) and can be changed; it's saved with the school
+- [x] Website with a calendar page that offers iCal → linked automatically, no AI call, refreshed daily
+- [x] No feed on the website → Claude web search (one paused search resumed), strict report tool, no forced tool choice; impossible dates and unsafe source links dropped; parent reviews; dates for other grades hidden
+- [x] The next family at the same school gets the cached answer (no crawl, no AI call); a different website or town can't read or overwrite it
+- [x] Text sent to the AI prompt can't add lines; invalid grades dropped; daily limit
+- [x] Static hosting: search works, then explains that automatic finding needs the full version and opens the other ways
+- [x] Grade filter: kindergarten-only, middle/high school, "Grades 6–12", "3rd grade", "K–5" items only show for the right child
+
+### Saved ideas and taste (v3.2)
+- [x] Save from a card or from inside an idea; Discover → ♥ Saved (count) lists them newest first; un-saving there removes it; empty state explains; Profile → Saved ideas opens the list
+- [x] For you doesn't repeat saved ideas
+- [x] Saving several "Make & create" ideas → "You seem to love Make & create…" and "Because you saved …" reasons in the feed
+- [x] Unit tests: liked kinds rise across 40 seeded feeds, swaps push kinds down, the boost is capped, feeds keep ≥ 4 categories
 
 ### School calendars
 - [x] Grand Ridge Elementary via calendar link: missing school name, not-a-link, a web page instead of a calendar, a site that blocks browsers (→ suggests importing the file), then a `webcal://` link that works (stored as https)

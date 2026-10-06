@@ -73,6 +73,25 @@ export function startMockAnthropic(port = 9911) {
     req.on('end', () => {
       const parsed = body ? JSON.parse(body) : {};
       requests.push({ url: req.url, headers: req.headers, body: parsed });
+      // School calendar search: one paused web search, then the report.
+      if (Array.isArray(parsed.tools) && parsed.tools.some((t) => t.name === 'report_school_calendar')) {
+        const ask = textOf(parsed.messages[0]);
+        if (parsed.messages.length === 1) return reply(res, parsed, { stop_reason: 'pause_turn', content: [
+          { type: 'server_tool_use', id: 'srvtoolu_s1', name: 'web_search', input: { query: 'school calendar 2026-27' } },
+          { type: 'web_search_tool_result', tool_use_id: 'srvtoolu_s1', content: [{ type: 'web_search_result', url: 'https://www.synergy.example/calendar', title: 'Calendar', encrypted_content: 'enc', page_age: null }] },
+        ] });
+        const found = !/Nowhere Academy/.test(ask);
+        return reply(res, parsed, { stop_reason: 'tool_use', content: [toolUse('report_school_calendar', found ? {
+          found: true, school: 'Synergy Learning Academy, Issaquah', calendar_page: 'https://www.synergy.example/calendar', feed_url: '',
+          events: [
+            { date: '2026-10-23', end: '2026-10-23', title: 'School closed - staff training', kind: 'off' },
+            { date: '2026-11-25', end: '2026-11-27', title: 'Thanksgiving break', kind: 'off' },
+            { date: '2026-11-06', end: '2026-11-06', title: 'No school for kindergarten - conferences', kind: 'off' },
+            { date: '2026-02-30', end: '2026-02-30', title: 'Impossible date', kind: 'off' },
+          ],
+          sources: ['https://www.synergy.example/calendar', 'javascript:alert(1)'], note: 'Found the 2026-27 calendar on the school site.',
+        } : { found: false, school: '', calendar_page: '', feed_url: '', events: [], sources: [], note: 'No official calendar found for this school.' })] });
+      }
       if (Array.isArray(parsed.tools)) return reply(res, parsed, chatReply(parsed.messages));
       // School newsletter photo → dates (one deliberately bad date to be cleaned up server-side).
       const first = parsed.messages?.[0]?.content;

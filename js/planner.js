@@ -1,5 +1,6 @@
 // Pure recommendation engine — no DOM, so it can be unit-tested in Node.
 import { ACTIVITIES, SEASONS } from './data.js';
+import { tasteBoost } from './taste.js';
 
 export function currentSeason(date = new Date()) {
   const m = date.getMonth();
@@ -28,6 +29,8 @@ export function score(activity, ctx) {
   if (weather === 'wet' && activity.weather === 'wet') s += 3;
   if (weather === 'dry' && activity.setting !== 'home') s += 2;
   if (favIds.includes(activity.id)) s += 1.5;
+  // Learned taste: lifts activities like the ones this family saved and did (see taste.js).
+  s += tasteBoost(activity, ctx.taste);
   if (recentIds.includes(activity.id)) s -= 6; // keep things fresh
   // A centred age fit is better than an edge fit.
   if (ages.length) {
@@ -190,13 +193,13 @@ export function windowPlace(win, vibe, weather) {
 
 // One activity per free window, no repeats across the weekend.
 // days: [{ key, weather, windows }]
-export function fillWeekend(days, { ages = [], vibe = 'mix', recentIds = [], favIds = [] } = {}, seed = Date.now()) {
+export function fillWeekend(days, { ages = [], vibe = 'mix', recentIds = [], favIds = [], taste = null } = {}, seed = Date.now()) {
   const used = [];
   const picks = {};
   let n = 0;
   for (const day of days) {
     for (const win of day.windows) {
-      const base = { ages, maxMins: win.mins, weather: day.weather, recentIds: [...recentIds, ...used], favIds };
+      const base = { ages, maxMins: win.mins, weather: day.weather, recentIds: [...recentIds, ...used], favIds, taste };
       const place = windowPlace(win, vibe, day.weather);
       let [a] = recommend({ ...base, place, energy: win.part === 'morning' ? 'active' : 'any' }, { count: 1, seed: seed + n++ }).filter((x) => !used.includes(x.id));
       if (!a) [a] = recommend({ ...base, place: 'any', energy: 'any' }, { count: 1, seed: seed + n++ }).filter((x) => !used.includes(x.id));
@@ -209,8 +212,8 @@ export function fillWeekend(days, { ages = [], vibe = 'mix', recentIds = [], fav
 }
 
 // A replacement for one window that isn't already in the plan.
-export function swapPick(day, win, { ages = [], vibe = 'mix', exclude = [], favIds = [] } = {}, seed = Date.now()) {
-  const base = { ages, maxMins: win.mins, weather: day.weather, recentIds: exclude, favIds };
+export function swapPick(day, win, { ages = [], vibe = 'mix', exclude = [], favIds = [], taste = null } = {}, seed = Date.now()) {
+  const base = { ages, maxMins: win.mins, weather: day.weather, recentIds: exclude, favIds, taste };
   const pool = [...recommend({ ...base, place: windowPlace(win, vibe, day.weather) }, { count: 6, seed }), ...recommend({ ...base, place: 'any' }, { count: 6, seed: seed + 1 })];
   return pool.find((a) => !exclude.includes(a.id)) || null;
 }
