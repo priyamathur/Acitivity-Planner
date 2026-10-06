@@ -110,9 +110,9 @@ export function cleanEvents(list, { today = isoOf(new Date()) } = {}) {
 // Is this date inside the event (inclusive)?
 export const covers = (e, iso) => e.date <= iso && iso <= e.end;
 
-// School events that touch [fromIso, toIso], across all linked schools.
+// School events that touch [fromIso, toIso], across all linked schools (only the child's grade).
 export function schoolEventsBetween(schools, fromIso, toIso) {
-  return (schools || []).flatMap((s) => (s.events || []).filter((e) => e.end >= fromIso && e.date <= toIso).map((e) => ({ ...e, school: s.name, kid: s.kid })))
+  return (schools || []).flatMap((s) => forGrade(s.events || [], s.grade).filter((e) => e.end >= fromIso && e.date <= toIso).map((e) => ({ ...e, school: s.name, kid: s.kid })))
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
@@ -132,3 +132,70 @@ export function nextDayOff(schools, today, days = 14) {
 }
 
 export { addDays, isoOf };
+
+// ---------- Grades ----------
+// 'prek' (preschool / pre-K), 'k', then '1'…'12'.
+export const GRADES = [['prek', 'Preschool / Pre-K'], ['k', 'Kindergarten'], ...Array.from({ length: 12 }, (_, i) => [String(i + 1), `Grade ${i + 1}`])];
+const gradeNum = (g) => (g === 'prek' ? -1 : g === 'k' ? 0 : Number(g));
+export const gradeLabel = (g) => (GRADES.find(([k]) => k === g) || [, ''])[1];
+
+// Which grades an event title is limited to, or null if it's for everyone.
+export function gradesMentioned(title) {
+  const t = ` ${String(title || '').toLowerCase()} `;
+  const set = new Set();
+  const add = (a, b = a) => { for (let n = Math.min(a, b); n <= Math.max(a, b); n++) set.add(n); };
+  if (/\b(pre-?k|pre-?school|preschool|pre-?kindergarten|tk)\b/.test(t)) add(-1);
+  if (/\bkindergarten\b|\bkinder\b|\bk(?:-| )only\b/.test(t) && !/pre-?kindergarten/.test(t)) add(0);
+  for (const m of t.matchAll(/\bk\s*(?:-|–|to)\s*(\d{1,2})\b/g)) add(0, Number(m[1]));
+  for (const m of t.matchAll(/\bgrades?\s+(\d{1,2})(?:\s*(?:-|–|to|through|&|and)\s*(\d{1,2}))?/g)) add(Number(m[1]), Number(m[2] ?? m[1]));
+  for (const m of t.matchAll(/\b(\d{1,2})(?:st|nd|rd|th)(?:\s*(?:-|–|to|&|and)\s*(\d{1,2})(?:st|nd|rd|th))?\s*grade/g)) add(Number(m[1]), Number(m[2] ?? m[1]));
+  if (/\b(middle school|middle schools|ms only|junior high)\b/.test(t)) add(6, 8);
+  if (/\b(high school|high schools|hs only)\b/.test(t)) add(9, 12);
+  if (/\bseniors?\b|\bgraduation\b/.test(t)) add(12);
+  if (/\belementary\b/.test(t) && !set.size) add(0, 5);
+  return set.size ? set : null;
+}
+
+// Keep events for everyone, plus those that name this child's grade.
+export function forGrade(events, grade) {
+  if (!grade) return events;
+  const g = gradeNum(grade);
+  return events.filter((e) => { const s = gradesMentioned(e.title); return !s || s.has(g); });
+}
+
+// ---------- Finding a school's calendar feed on its website ----------
+const googleIcs = (id) => `https://calendar.google.com/calendar/ical/${encodeURIComponent(id)}/public/basic.ics`;
+
+// Feed links (.ics, webcal, Google Calendar) and likely calendar pages in a web page.
+export function extractCalendarLinks(html, baseUrl) {
+  const base = new URL(baseUrl);
+  const rootDomain = (h) => h.split('.').slice(-2).join('.');
+  const feeds = new Set();
+  const pages = new Map();
+  const abs = (v) => { try { return new URL(v.replace(/&amp;/g, '&').trim(), base).href; } catch { return null; } };
+  const consider = (raw, text = '') => {
+    if (!raw || /^(#|mailto:|tel:|javascript:)/i.test(raw)) return;
+    if (/^webcals?:\/\//i.test(raw)) return void feeds.add(raw.replace(/^webcals?:\/\//i, 'https://'));
+    const u = abs(raw);
+    if (!u) return;
+    const url = new URL(u);
+    if (url.hostname === 'calendar.google.com') {
+      const src = url.searchParams.get('src');
+      if (src) feeds.add(googleIcs(src));
+      else if (/\/calendar\/ical\//.test(url.pathname)) feeds.add(u);
+      return;
+    }
+    if (/\.ics$/i.test(url.pathname) || /[?&](format|type|output)=(ical|ics)\b/i.test(url.search) || /\/(ical|icalfeed|ics)(\/|$)/i.test(url.pathname)) return void feeds.add(u);
+    if (!/^https?:$/.test(url.protocol) || rootDomain(url.hostname) !== rootDomain(base.hostname)) return;
+    const hay = `${url.pathname} ${text}`.toLowerCase();
+    const s = (/calendar/.test(hay) ? 3 : 0) + (/academic|school year|district calendar|instructional/.test(hay) ? 2 : 0) + (/events?/.test(hay) ? 1 : 0);
+    if (s && url.href !== base.href) pages.set(url.href.split('#')[0], Math.max(s, pages.get(url.href.split('#')[0]) || 0));
+  };
+  for (const m of html.matchAll(/<a\b[^>]*?href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]{0,200}?)<\/a>/gi)) consider(m[1], m[2].replace(/<[^>]+>/g, ' '));
+  for (const m of html.matchAll(/\b(?:src|data-[a-z-]+|value|content)\s*=\s*["']([^"']+)["']/gi)) consider(m[1]);
+  for (const m of html.matchAll(/(webcals?:\/\/[^\s"'<>]+|https:\/\/calendar\.google\.com\/calendar\/(?:embed|ical)[^\s"'<>]+)/gi)) consider(m[1]);
+  return { feeds: [...feeds].slice(0, 6), pages: [...pages.entries()].sort((a, b) => b[1] - a[1]).map(([u]) => u).slice(0, 4) };
+}
+
+// Normalised key for caching a school's calendar ("Grand Ridge Elementary School" ≈ "grand ridge elementary").
+export const schoolKey = (name, cell = '') => `${String(name).toLowerCase().replace(/\b(school|the)\b/g, '').replace(/[^a-z0-9]+/g, ' ').trim()}|${cell}`;

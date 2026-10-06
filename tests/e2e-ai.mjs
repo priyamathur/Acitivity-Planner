@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { startMockAnthropic } from './mock-anthropic.mjs';
+import { startSchoolSites } from './school-fixtures.mjs';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright');
@@ -13,8 +14,9 @@ const SHOTS = process.env.SHOTS || 'tests/screenshots';
 mkdirSync(SHOTS, { recursive: true });
 
 const mock = await startMockAnthropic(9912);
+const sites = await startSchoolSites(9923);
 writeFileSync('worker/.dev.vars', 'ANTHROPIC_API_KEY=test-key\nANTHROPIC_BASE_URL=http://127.0.0.1:9912\n');
-const dev = spawn('npx', ['wrangler', 'dev', '--port', String(PORT), '--ip', '127.0.0.1', '--var', 'MIN_FAMILIES:2', '--persist-to', '/tmp/littleroam-e2e-' + Date.now()], {
+const dev = spawn('npx', ['wrangler', 'dev', '--port', String(PORT), '--ip', '127.0.0.1', '--var', 'MIN_FAMILIES:2', '--var', 'SCHOOL_FETCH_TEST_ORIGIN:http://127.0.0.1:9923', '--var', 'OVERPASS_URL:http://127.0.0.1:9923/overpass', '--persist-to', '/tmp/littleroam-e2e-' + Date.now()], {
   cwd: 'worker', env: { ...process.env, WRANGLER_SEND_METRICS: 'false' }, stdio: 'ignore', detached: true,
 });
 for (let i = 0; i < 60; i++) {
@@ -142,8 +144,40 @@ try {
   await page.setInputFiles('#photo-file', { name: 'newsletter2.png', mimeType: 'image/png', buffer: png });
   await page.getByRole('button', { name: /Save Synergy Learning Academy dates/ }).click();
   await page.locator('#sheet-body').getByText(/3 upcoming dates/).waitFor();
-  await page.keyboard.press('Escape');
   await page.screenshot({ path: `${SHOTS}/13-school-photo.png`, fullPage: true });
+
+  // Type the preschool's name + grade → it's found and its official dates are looked up automatically.
+  await page.getByRole('button', { name: 'Link a different way' }).click();
+  await page.fill('[name=school]', 'Synergy learning academy');
+  if ((await page.inputValue('[name=grade]')) !== 'k') fail('grade should be guessed from age 5 as Kindergarten');
+  await page.selectOption('[name=grade]', 'prek');
+  await page.getByRole('button', { name: 'Find school' }).click();
+  await page.locator('.school-hit').first().getByText('Synergy Learning Academy').waitFor();
+  await page.locator('.school-hit').first().getByText(/Preschool/).waitFor();
+  await page.locator('.school-hit').first().click();
+  await page.getByRole('heading', { name: 'Check these dates' }).waitFor();
+  await page.getByText('Found the 2026-27 calendar on the school site.').waitFor();
+  await page.locator('#sheet-body').getByRole('link', { name: 'www.synergy.example' }).waitFor();
+  await page.getByText('1 date for other grades hidden.').waitFor();
+  if (await page.locator('.review-row', { hasText: 'kindergarten' }).count()) fail('kindergarten-only date should be hidden for preschool');
+  await page.screenshot({ path: `${SHOTS}/14-school-found.png`, fullPage: true });
+  await page.getByRole('button', { name: /Save Synergy Learning Academy dates/ }).click();
+  await page.locator('#sheet-body').getByText(/Official dates found online · just now · 2 upcoming dates/).waitFor();
+  await page.locator('#sheet-body').getByText(/won't update by themselves/).waitFor();
+  const syn = await page.evaluate(() => window.__littleroam.store.get().schools[0]);
+  if (syn.source !== 'search' || syn.grade !== 'prek' || syn.events.length !== 3) fail('search result saved wrongly: ' + JSON.stringify(syn));
+
+  // A school whose website offers a calendar feed is linked straight away (no review needed).
+  await page.getByRole('button', { name: 'Link a different way' }).click();
+  await page.fill('[name=school]', 'Grand Ridge');
+  await page.selectOption('[name=grade]', 'k');
+  await page.getByRole('button', { name: 'Find school' }).click();
+  await page.locator('.school-hit', { hasText: 'Grand Ridge Elementary School' }).click();
+  await page.locator('#sheet-body').getByText(/Calendar linked · updated just now · 4 upcoming dates/).waitFor();
+  await page.locator('#sheet-body .cls-row', { hasText: 'No school for kindergarten' }).waitFor();
+  const gr = await page.evaluate(() => window.__littleroam.store.get().schools[0]);
+  if (gr.url !== 'http://127.0.0.1:9923/gr/calendar.ics' || gr.source !== 'feed') fail('feed not linked: ' + JSON.stringify(gr));
+  await page.keyboard.press('Escape');
   // With the server, "Use in Claude or ChatGPT" gives the MCP address.
   await page.getByRole('button', { name: /Use in Claude or ChatGPT/ }).click();
   if (!(await page.inputValue('#mcp-url')).endsWith('/mcp')) fail('MCP address should end in /mcp');
@@ -159,5 +193,6 @@ try {
   await browser.close();
   try { process.kill(-dev.pid, 'SIGTERM'); } catch {}
   mock.close();
+  sites.close();
   process.exit();
 }

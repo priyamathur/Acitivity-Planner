@@ -54,7 +54,11 @@ try {
       await page.waitForTimeout(400);
       await axe(page, `${scheme}:${v}`);
     }
-    // Kids tab and key sheets
+    // Discover → Saved (empty state) and the school finder with results
+    await page.goto(BASE + '#discover');
+    await page.getByRole('tab', { name: /Saved/ }).click();
+    await axe(page, `${scheme}:discover-saved`);
+        // Kids tab and key sheets
     await page.goto(BASE + '#home');
     await page.getByRole('tab', { name: 'Kids' }).click();
     await axe(page, `${scheme}:home-kids`);

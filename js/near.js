@@ -39,7 +39,6 @@ export function buildQuery(type, lat, lon, radiusM) {
   return `[out:json][timeout:25];(${parts});out center tags 80;`;
 }
 
-// Map data is user-edited: only plain web links are ever shown (no javascript: etc.).
 // fetch() with a message a parent can act on when the phone is offline or the server is unreachable.
 async function net(url, opts) {
   try {
@@ -50,6 +49,7 @@ async function net(url, opts) {
   }
 }
 
+// Map data is user-edited: only plain web links are ever shown (no javascript: etc.).
 export function safeWebsite(raw) {
   if (typeof raw !== 'string') return null;
   const v = raw.trim().split(';')[0].trim();
@@ -137,4 +137,53 @@ export function directionsUrl(p) {
 }
 export function osmUrl(p) {
   return `https://www.openstreetmap.org/${p.id}`;
+}
+
+// ---------- Schools (and preschools / daycares) by name ----------
+const escRe = (q) => q.replace(/[\\.*+?^${}()|[\]"]/g, ' ').replace(/\s+/g, ' ').trim();
+
+const GENERIC = new Set(['school', 'schools', 'the', 'of', 'and', 'elementary', 'middle', 'high', 'academy', 'preschool', 'pre', 'primary', 'junior', 'senior', 'k8', 'k-8', 'center', 'centre', 'learning', 'early', 'childhood', 'montessori', 'kindergarten', 'daycare', 'child', 'care']);
+const schoolWords = (q) => escRe(String(q).toLowerCase()).split(' ').filter((w) => w.length > 1 && !GENERIC.has(w));
+const squash = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+
+export function buildSchoolQuery(name, lat, lon, radiusM = 40000) {
+  // Match each word, in order, anywhere in the name ("grand ridge" finds "Grand Ridge Elementary School").
+  // Only the first distinctive word goes into the map query (a town or "Elementary" typed after the
+  // name would otherwise rule out the right school); results are then ranked by how many words match.
+  const words = schoolWords(name).slice(0, 1);
+  // Spaces inside a word are optional, so "Grandridge" still finds "Grand Ridge".
+  const re = words.length ? words.map((w) => [...w.replace(/ /g, '')].join(' ?')).join('.*') : escRe(name);
+  return `[out:json][timeout:25];nwr["amenity"~"^(school|kindergarten|childcare)$"]["name"~"${re}",i](around:${radiusM},${lat},${lon});out center tags 20;`;
+}
+
+export function parseSchools(json, origin, query = '') {
+  return (json.elements || [])
+    .map((el) => {
+      const t = el.tags || {};
+      const lat = el.lat ?? el.center?.lat;
+      const lon = el.lon ?? el.center?.lon;
+      if (lat == null || !t.name) return null;
+      return {
+        id: `${el.type}/${el.id}`,
+        name: t.name,
+        kind: t.amenity === 'kindergarten' || t.amenity === 'childcare' ? 'preschool' : 'school',
+        website: safeWebsite(t.website || t['contact:website'] || t.url),
+        district: t.operator || t['operator:short'] || '',
+        grades: t.grades || '',
+        town: t['addr:city'] || '',
+        lat, lon,
+        km: haversineKm(origin, { lat, lon }),
+      };
+    })
+    .filter(Boolean)
+    .map((p) => ({ ...p, match: query ? escRe(String(query).toLowerCase()).split(' ').filter((w) => w.length > 1 && w !== 'the' && w !== 'of').filter((w) => squash(p.name).includes(squash(w))).length + (squash(query).includes(squash(p.name)) ? 3 : 0) : 0 }))
+    .sort((a, b) => b.match - a.match || a.km - b.km)
+    .filter((p, i, all) => all.findIndex((q) => q.name === p.name && Math.abs(q.km - p.km) < 0.3) === i)
+    .slice(0, 8);
+}
+
+export async function findSchools(name, origin, { endpoint = OVERPASS, signal } = {}) {
+  const res = await net(endpoint, { method: 'POST', body: 'data=' + encodeURIComponent(buildSchoolQuery(name, origin.lat, origin.lon)), headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal });
+  if (!res.ok) throw new Error(`School search failed (${res.status}). The free map server may be busy — try again in a minute.`);
+  return parseSchools(await res.json(), origin, name);
 }

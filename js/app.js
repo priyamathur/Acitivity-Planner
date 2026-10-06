@@ -4,7 +4,8 @@ import { PLACE_TYPES, CLASS_TYPES, findPlaces, geocode, getForecast, getPosition
 import * as store from './store.js';
 import * as api from './api.js';
 import { cellFor, bandsForAges, bandLabel } from './community.js';
-import { parseICS, normaliseFeedUrl, schoolEventsBetween, nextDayOff, addDays } from './school.js';
+import { parseICS, normaliseFeedUrl, schoolEventsBetween, nextDayOff, addDays, forGrade, GRADES, gradeLabel } from './school.js';
+import { learnTaste, because, topCategories } from './taste.js';
 
 // Optional: set to a Tally/Google Form/Stripe link to collect Plus early-access sign-ups.
 const WAITLIST_URL = '';
@@ -17,6 +18,8 @@ const S = () => store.get();
 // AI-created ideas are saved on the device so they can be planned and remembered like any other.
 Object.assign(byId, S().custom);
 const famId = () => S().fam || (store.set((s) => (s.fam = store.uid())), S().fam);
+// What the family seems to like, learned on this phone from saves, memories and swaps.
+const taste = () => learnTaste(S(), byId);
 const kidAges = () => S().family.kids.map((k) => ageFromBirthYear(k.birthYear)).filter((a) => !Number.isNaN(a));
 const fmtMins = (m) => (m < 60 ? `${m} min` : m % 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m / 60} h`);
 const settingLabel = { home: 'At home', outside: 'Outside', out: 'Trip' };
@@ -133,6 +136,7 @@ function openActivity(a, { fromLink = false, slot = null } = {}) {
           <button class="btn ghost danger" data-act="remove">Remove</button>`
         : `<button class="btn primary" data-act="plan">🗓️ Add to our weekend</button>
           <button class="btn" data-act="done">✅ We did it</button>
+          <button class="btn fav-btn ${S().favs.includes(a.id) ? 'on' : ''}" data-fav="${a.id}" aria-pressed="${S().favs.includes(a.id)}">${S().favs.includes(a.id) ? '♥ Saved' : '♡ Save'}</button>
           <button class="btn ghost" data-act="share">↗ Share</button>`}
       </div>
     </div>`,
@@ -168,8 +172,10 @@ document.addEventListener('click', (e) => {
     const id = fav.dataset.fav;
     store.set((s) => (s.favs = s.favs.includes(id) ? s.favs.filter((x) => x !== id) : [...s.favs, id]));
     const on = S().favs.includes(id);
-    $$(`[data-fav="${id}"]`).forEach((b) => { b.classList.toggle('on', on); b.textContent = on ? '♥' : '♡'; b.setAttribute('aria-pressed', on); });
-    toast(on ? 'Saved to favourites' : 'Removed from favourites');
+    $$(`[data-fav="${id}"]`).forEach((b) => { b.classList.toggle('on', on); b.textContent = b.classList.contains('fav-btn') ? (on ? '♥ Saved' : '♡ Save') : on ? '♥' : '♡'; b.setAttribute('aria-pressed', on); });
+    toast(on ? 'Saved ♥ Find it in Discover → Saved' : 'Removed from Saved');
+    if ($('main').dataset.view === 'discover' && discover.filter === 'saved' && !on) renderDiscover($('#view'));
+    if (e.target.closest('#sheet') && $('main').dataset.view === 'discover') renderDiscover($('#view'));
   }
   if (e.target.closest('[data-close]')) closeSheet();
 });
@@ -191,6 +197,7 @@ function homePicks() {
     weather: today ? (['wet', 'snow'].includes(weatherBucket(today.code)) || today.rain >= 60 ? 'wet' : 'dry') : null,
     recentIds: [],
     favIds: S().favs,
+    taste: taste(),
   };
   const pool = ACTIVITIES.filter((a) => audienceOf(a) === home.tab);
   return recommend(ctx, { count: 5, seed: daySeed() + home.seed, pool });
@@ -298,22 +305,26 @@ function renderHome(root) {
 
 // ======================= Discover (feed) =======================
 const discover = { filter: 'foryou', seed: 0 };
-const DISCOVER_FILTERS = { foryou: 'For you', weekend: 'This weekend', rainy: 'Rainy day', free: 'Free days' };
+const DISCOVER_FILTERS = { foryou: 'For you', saved: 'Saved', weekend: 'This weekend', rainy: 'Rainy day', free: 'Free days' };
 const audLabel = (a) => (audienceOf(a) === 'family' ? 'Family' : 'Kids');
+const savedList = () => S().favs.map((id) => byId[id]).filter(Boolean);
 
-function discoverPicks() {
-  const ctx = { ages: kidAges(), maxMins: 600, place: 'any', weather: null, recentIds: S().recent, favIds: S().favs };
+function discoverPicks(t) {
+  if (discover.filter === 'saved') return savedList().reverse(); // newest first
+  const ctx = { ages: kidAges(), maxMins: 600, place: 'any', weather: null, recentIds: S().recent, favIds: [], taste: t };
   const seed = daySeed() + discover.seed;
   const wk = weekendModel(0).days.filter((d) => !d.past);
+  // The feed is for finding new things: what's already saved lives under Saved.
+  const fresh = ACTIVITIES.filter((a) => !S().favs.includes(a.id));
   const pools = {
-    foryou: ACTIVITIES,
-    weekend: ACTIVITIES.filter((a) => a.setting !== 'home'),
-    rainy: ACTIVITIES.filter((a) => a.weather !== 'dry' && a.setting !== 'outside'),
-    free: ACTIVITIES.filter((a) => a.mins >= 60),
+    foryou: fresh,
+    weekend: fresh.filter((a) => a.setting !== 'home'),
+    rainy: fresh.filter((a) => a.weather !== 'dry' && a.setting !== 'outside'),
+    free: fresh.filter((a) => a.mins >= 60),
   };
   if (discover.filter === 'weekend') ctx.weather = wk.some((d) => d.weather === 'wet') ? 'wet' : wk.some((d) => d.weather) ? 'dry' : null;
   if (discover.filter === 'rainy') ctx.weather = 'wet';
-  return recommend(ctx, { count: 12, seed, pool: pools[discover.filter] || ACTIVITIES });
+  return recommend(ctx, { count: 12, seed, pool: pools[discover.filter] || fresh });
 }
 
 function pin(a, i, { tag = '', why = '' } = {}) {
@@ -321,7 +332,7 @@ function pin(a, i, { tag = '', why = '' } = {}) {
   return `<article class="pin" data-cat="${a.cat}" data-id="${a.id}">
     <button class="pin-main" data-open="${a.id}">
       <span class="pin-art h${i % 3}"><span class="pin-tag">${esc(tag || `${audLabel(a)} · ${settingLabel[a.setting]}`)}</span><span class="pin-emoji" aria-hidden="true">${esc(a.emoji)}</span></span>
-      <span class="pin-text"><strong>${esc(a.title)}</strong><span class="meta">${why ? esc(why) : `${fmtMins(a.mins)} · ages ${a.ages[0]}–${a.ages[1]}`}</span></span>
+      <span class="pin-text"><strong>${esc(a.title)}</strong><span class="meta">${fmtMins(a.mins)} · ages ${a.ages[0]}–${a.ages[1]}</span>${why ? `<span class="pin-why">${esc(why)}</span>` : ''}</span>
     </button>
     <button class="pin-fav fav ${fav ? 'on' : ''}" data-fav="${a.id}" aria-pressed="${fav}" aria-label="Save ${esc(a.title)}">${fav ? '♥' : '♡'}</button>
   </article>`;
@@ -331,24 +342,32 @@ function renderDiscover(root) {
   const s = S();
   const kids = s.family.kids;
   const where = s.location ? (s.location.label === 'Your location' ? 'near you' : s.location.label.split(',')[0]) : '';
-  const picks = discoverPicks();
+  const t = taste();
+  const picks = discoverPicks(t);
   const today = store.isoDate();
   const daysOff = discover.filter === 'free' ? schoolEventsBetween(s.schools, today, addDays(today, 60)).filter((e) => e.kind !== 'event').slice(0, 4) : [];
+  const likes = topCategories(t).map((c) => CATEGORIES[c]?.label).filter(Boolean);
+  const nSaved = savedList().length;
+  const reason = (a) => { const b = because(a, t, byId); return b ? `Because you ${b.why === 'did' ? 'did' : 'saved'} ${b.title}` : ''; };
   root.innerHTML = `
     <header class="page-head">
       <p class="eyebrow">${kids.length ? `Picked for ${kids.map((k, i) => esc(kidLabel(k, i))).join(' and ')}` : 'Add your kids in Profile for better picks'}${where ? ` · ${esc(where)}` : ''}</p>
       <h1>Discover</h1>
+      ${likes.length && discover.filter !== 'saved' ? `<p class="meta taste-line" id="taste-line">You seem to love ${likes.map(esc).join(' and ')}. The more you save and do, the better this gets.</p>` : ''}
     </header>
-    <div class="chips-scroll" role="tablist">${Object.entries(DISCOVER_FILTERS).map(([k, l]) => `<button role="tab" class="chip-btn ${discover.filter === k ? 'on' : ''}" aria-selected="${discover.filter === k}" data-dfilter="${k}">${l}</button>`).join('')}</div>
+    <div class="chips-scroll" role="tablist">${Object.entries(DISCOVER_FILTERS).map(([k, l]) => `<button role="tab" class="chip-btn ${discover.filter === k ? 'on' : ''}" aria-selected="${discover.filter === k}" data-dfilter="${k}">${k === 'saved' ? `♥ ${l}${nSaved ? ` (${nSaved})` : ''}` : l}</button>`).join('')}</div>
     ${discover.filter === 'free'
       ? (s.schools.length
         ? (daysOff.length ? `<div class="card class-list">${daysOff.map((e) => `<div class="cls-row"><span>${e.kind === 'early' ? '⏰' : '🏖️'} ${esc(e.title)}<span class="meta">${esc(e.school)}${kidName(e.kid) ? ` · ${esc(kidName(e.kid))}` : ''}</span></span><span class="meta">${fmtDate(e.date)}${e.end !== e.date ? ` – ${fmtDate(e.end)}` : ''}</span></div>`).join('')}</div>` : '<p class="meta">No days off in the school calendars for the next 2 months.</p>')
         : '<a class="notice" href="#profile"><span>Link the kids\' school calendars in Profile to see days off here. <b>Link a school ›</b></span></a>')
-      : dayOffNotice()}
-    <section class="pins" id="pins">${picks.length ? picks.map((a, i) => pin(a, i)).join('') : '<p class="empty">Nothing here yet. Try another filter.</p>'}</section>
-    <button class="btn ghost big" id="d-more">Show me different ideas</button>`;
+      : discover.filter === 'saved' ? '' : dayOffNotice()}
+    ${discover.filter === 'saved' && !picks.length
+      ? '<div class="empty-state"><p class="empty-big" aria-hidden="true">♡</p><p><b>Nothing saved yet</b></p><p class="meta">Tap ♡ on any idea to keep it here. Saved ideas also teach LittleRoam what your family likes.</p><button class="btn primary" id="go-foryou">Browse ideas</button></div>'
+      : `<section class="pins" id="pins">${picks.length ? picks.map((a, i) => pin(a, i, { why: discover.filter === 'saved' ? '' : reason(a) })).join('') : '<p class="empty">Nothing here yet. Try another filter.</p>'}</section>
+    ${discover.filter === 'saved' ? '<p class="fine center">Saved on this phone. Back them up from Profile → Backup &amp; your data.</p>' : '<button class="btn ghost big" id="d-more">Show me different ideas</button>'}`}`;
   $$('[data-dfilter]', root).forEach((b) => (b.onclick = () => { discover.filter = b.dataset.dfilter; discover.seed = 0; renderDiscover(root); }));
-  $('#d-more', root).onclick = () => { discover.seed += 31; renderDiscover(root); window.scrollTo(0, 0); };
+  $('#d-more', root)?.addEventListener('click', () => { discover.seed += 31; renderDiscover(root); window.scrollTo(0, 0); });
+  $('#go-foryou', root)?.addEventListener('click', () => { discover.filter = 'foryou'; renderDiscover(root); });
   if (discover.filter === 'foryou') popularPins();
 }
 
@@ -375,10 +394,12 @@ const ago = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 
 const schoolOf = (i) => S().schools.find((x) => x.kid === String(i));
 
 function schoolStatus(sc) {
-  const upcoming = sc.events.filter((e) => e.end >= store.isoDate()).length;
-  const how = sc.source === 'feed' ? `Calendar linked · updated ${ago(sc.updated)}` : sc.source === 'file' ? `Calendar file imported ${ago(sc.updated)}` : `Dates from a photo · ${ago(sc.updated)}`;
+  const upcoming = forGrade(sc.events, sc.grade).filter((e) => e.end >= store.isoDate()).length;
+  const how = { feed: `Calendar linked · updated ${ago(sc.updated)}`, file: `Calendar file imported ${ago(sc.updated)}`, search: `Official dates found online · ${ago(sc.updated)}` }[sc.source] || `Dates from a photo · ${ago(sc.updated)}`;
   return `${how} · ${upcoming} upcoming date${upcoming === 1 ? '' : 's'}${sc.error ? ' · last refresh failed' : ''}`;
 }
+// A first guess at the grade from the birth year (US-style cutoffs vary, so parents confirm it).
+const gradeGuess = (kid) => { const age = kid ? ageFromBirthYear(kid.birthYear) : 5; return age <= 4 ? 'prek' : age === 5 ? 'k' : String(Math.min(12, age - 5)); };
 
 function renderProfile(root) {
   const s = S();
@@ -399,7 +420,7 @@ function renderProfile(root) {
         return `<div class="kid-row">
           <span class="kid-tile k${i % 4}" aria-hidden="true">${esc(initials(k.name, i))}</span>
           <div class="grow"><p class="kid-name">${esc(k.name || `Child ${i + 1}`)} · ${ageFromBirthYear(k.birthYear)}</p>
-            <p class="meta">${sc ? esc(sc.name) : 'No school linked'}</p>
+            <p class="meta">${sc ? `${esc(sc.name)}${sc.grade ? ` · ${esc(gradeLabel(sc.grade))}` : ''}` : 'No school linked'}</p>
             ${sc ? `<p class="ok-line ${sc.error ? 'warn' : ''}">${esc(schoolStatus(sc))}</p>` : ''}</div>
           <button class="btn sm ${sc ? '' : 'primary'}" data-school="${i}">${sc ? 'Manage' : 'Link school'}</button>
         </div>`;
@@ -411,6 +432,7 @@ function renderProfile(root) {
       <a class="set-row" href="#near"><span>Home area</span><span class="meta">${area ? esc(area) : 'Not set'} ›</span></a>
       <label class="set-row"><span>Share anonymously with nearby families<small>Only the activity, age bands and a ~5 km area, when you save a memory</small></span>
         <input type="checkbox" role="switch" class="switch" id="share-toggle" ${s.shareNearby ? 'checked' : ''} /></label>
+      <a class="set-row" href="#discover" id="saved-row"><span>Saved ideas</span><span class="meta">${s.favs.filter((id) => byId[id]).length} ›</span></a>
       <a class="set-row" href="#memories"><span>Past adventures</span><span class="meta">${s.memories.length} ›</span></a>
       <button class="set-row" id="mcp-btn"><span>Use in Claude or ChatGPT</span><span class="meta">Connect ›</span></button>
       <button class="set-row" id="data-btn"><span>Backup &amp; your data</span><span class="meta">›</span></button>
@@ -420,6 +442,7 @@ function renderProfile(root) {
   $('#add-kids', root)?.addEventListener('click', settings);
   $$('[data-school]', root).forEach((b) => (b.onclick = () => schoolSheet(Number(b.dataset.school))));
   $('#share-toggle', root).onchange = (e) => { store.set((st) => (st.shareNearby = e.target.checked)); toast(e.target.checked ? 'Sharing anonymously when you save a memory' : 'Not sharing'); };
+  $('#saved-row', root).onclick = () => (discover.filter = 'saved');
   $('#mcp-btn', root).onclick = mcpSheet;
   $('#data-btn', root).onclick = dataSheet;
   $('#plus-btn', root).onclick = plus;
@@ -439,17 +462,21 @@ function schoolSheet(i, { method = null } = {}) {
   const sc = schoolOf(i);
   if (sc && !method) {
     const today = store.isoDate();
-    const next = sc.events.filter((e) => e.end >= today).slice(0, 8);
-    return openSheet(`<h2>${esc(sc.name)}</h2><p class="meta">${esc(who)} · ${esc(schoolStatus(sc))}</p>
+    const next = forGrade(sc.events, sc.grade).filter((e) => e.end >= today).slice(0, 8);
+    return openSheet(`<h2>${esc(sc.name)}</h2><p class="meta">${esc(who)}${sc.grade ? ` · ${esc(gradeLabel(sc.grade))}` : ''} · ${esc(schoolStatus(sc))}</p>
       ${sc.error ? `<p class="tip">Last refresh failed: ${esc(sc.error)}</p>` : ''}
+      ${sc.source === 'search' ? '<p class="tip">These dates were read from the school\'s official calendar online. They won\'t update by themselves; check the source if something changes.</p>' : ''}
       <h3>Coming up</h3>
       ${next.length ? `<div class="class-list">${next.map((e) => `<div class="cls-row"><span>${e.kind === 'off' ? '🏖️' : e.kind === 'early' ? '⏰' : '🏫'} ${esc(e.title)}<span class="meta">${e.kind === 'off' ? 'No school' : e.kind === 'early' ? 'Early release / late start' : 'School event'}</span></span><span class="meta">${fmtDate(e.date)}${e.end !== e.date ? ` – ${fmtDate(e.end)}` : ''}${e.start ? ` ${esc(e.start)}` : ''}</span></div>`).join('')}</div>` : '<p class="meta">No upcoming dates.</p>'}
+      ${(sc.sources || []).length ? `<p class="meta sources-list">Source: ${sc.sources.map((u) => `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(new URL(u).hostname)}</a>`).join(' · ')}</p>` : ''}
+      <label class="mt">Grade<select class="input" id="sc-grade">${GRADES.map(([k, l]) => `<option value="${k}" ${sc.grade === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <div class="col gap mt">
         ${sc.source === 'feed' ? '<button class="btn primary" id="sc-refresh">Refresh now</button>' : ''}
         <button class="btn" id="sc-replace">Link a different way</button>
         <button class="btn ghost danger" id="sc-unlink">Unlink ${esc(sc.name)}</button>
       </div>`,
     (el) => {
+      $('#sc-grade', el).onchange = (e) => { store.set((s) => { const x = s.schools.find((y) => y.id === sc.id); if (x) x.grade = e.target.value; }); schoolSheet(i); rerender(); };
       $('#sc-refresh', el)?.addEventListener('click', async (e) => {
         e.target.disabled = true; e.target.textContent = 'Refreshing…';
         await refreshSchool(sc, { force: true });
@@ -461,11 +488,21 @@ function schoolSheet(i, { method = null } = {}) {
     });
   }
   const photo = api.schoolPhotoEnabled();
+  const loc = S().location;
+  const grade = sc?.grade || gradeGuess(kid);
   openSheet(`<h2>Link ${esc(who)}'s school</h2>
-    <p class="meta">Pick whatever your school gives you. LittleRoam only reads dates (days off, early release, events): no grades, no messages, no logins.</p>
-    <form id="school-form" class="col gap">
-      <label>School name<input class="input" name="school" maxlength="80" value="${esc(sc?.name || '')}" placeholder="e.g. Grand Ridge Elementary" /></label>
-      <div class="method ${method === 'url' || method === 'choose' || !method ? 'open' : ''}" data-method="url">
+    <p class="meta">Type the school's name and ${esc(who)}'s grade. LittleRoam finds the school's official calendar and only reads dates (days off, early release, events): no grades, no messages, no logins.</p>
+    <form id="finder" class="col gap">
+      <label>School name<input class="input" name="school" maxlength="80" autocomplete="off" value="${esc(sc?.name || '')}" placeholder="e.g. Grand Ridge Elementary" /></label>
+      <label>Grade<select class="input" name="grade">${GRADES.map(([k, l]) => `<option value="${k}" ${grade === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      ${loc ? '' : '<label>Town or city<input class="input" name="town" maxlength="60" placeholder="e.g. Issaquah, WA" /></label>'}
+      <button class="btn primary big" id="find-school">Find school</button>
+    </form>
+    <div id="school-results" class="school-results" aria-live="polite"></div>
+    <p class="status meta" id="school-status" role="status"></p>
+    <details class="other-ways" id="other-ways" ${method === 'choose' ? 'open' : ''}><summary>Other ways to add the calendar</summary>
+    <form id="school-form" class="col gap mt">
+      <div class="method" data-method="url">
         <p class="method-title">🔗 Paste a calendar link</p>
         <p class="meta">From the school website, Brightwheel, ParentSquare or a Google calendar: look for “Subscribe”, “iCal” or “Add to calendar”, and copy the link (it often ends in .ics or starts with webcal://).</p>
         <div class="row gap"><input class="input grow" name="url" inputmode="url" autocomplete="off" placeholder="https://… or webcal://…" aria-label="Calendar link" /><button class="btn primary" id="link-url" type="submit">Link</button></div>
@@ -481,27 +518,69 @@ function schoolSheet(i, { method = null } = {}) {
           <label class="btn file-btn">Take or choose a photo<input type="file" id="photo-file" accept="image/*" hidden /></label>`
         : '<p class="meta">Reading photos uses AI, which is switched on when the app runs on its server with an AI key.</p>'}
       </div>
-      <p class="status meta" id="school-status" role="status"></p>
-    </form>
-    <details class="help"><summary>Where do I find the calendar link?</summary>
-      <ul class="list">
-        <li><b>School website:</b> open the school's calendar page and look for “Subscribe”, “iCal”, “ICS” or “Add to Google Calendar”.</li>
-        <li><b>ParentSquare, Brightwheel and similar apps:</b> some let parents subscribe to the school calendar from the app, if the school has turned it on. Ask the office if you can't find it.</li>
-        <li><b>Shared Google Calendar:</b> the school's “public address in iCal format”.</li>
-        <li>No link at all? Use a photo of the newsletter instead.</li>
-      </ul>
-      <p class="fine">Menus differ between apps and change over time, so these are pointers, not exact steps.</p></details>`,
+    </form></details>`,
   (el) => {
     const status = (t, err = false) => { const p = $('#school-status', el); p.textContent = t; p.classList.toggle('error', err); };
     const name = () => $('[name=school]', el).value.trim();
+    const gradeNow = () => $('[name=grade]', el).value;
     const need = () => { if (!name()) { status('Add the school name first.', true); $('[name=school]', el).focus(); return false; } return true; };
     const finish = (v) => {
-      const upcoming = v.events.filter((e) => e.end >= store.isoDate());
+      const upcoming = forGrade(v.events, v.grade).filter((e) => e.end >= store.isoDate());
       const off = upcoming.filter((e) => e.kind === 'off').length;
       saveSchool(i, v);
-      toast(`${name()} linked: ${upcoming.length} upcoming date${upcoming.length === 1 ? '' : 's'}, ${off} day${off === 1 ? '' : 's'} off`);
+      toast(`${v.name} linked: ${upcoming.length} upcoming date${upcoming.length === 1 ? '' : 's'}, ${off} day${off === 1 ? '' : 's'} off`);
       schoolSheet(i);
       rerender();
+    };
+    const results = $('#school-results', el);
+    const offerOtherWays = (msg, page) => {
+      status(msg, true);
+      if (page) results.insertAdjacentHTML('beforeend', `<a class="btn" href="${esc(page)}" target="_blank" rel="noopener">Open the school's calendar page ↗</a>`);
+      $('#other-ways', el).open = true;
+    };
+    // 2) Find the chosen school's calendar.
+    const pick = async (school) => {
+      const g = gradeNow();
+      results.innerHTML = '';
+      if (!api.schoolFinderEnabled()) {
+        return offerOtherWays(`Finding ${school.name}'s calendar automatically needs the full version of LittleRoam (with its server). For now, use one of the ways below.`, school.website);
+      }
+      status(`Looking for ${school.name}'s official calendar… this can take up to a minute.`);
+      $('#find-school', el).disabled = true;
+      try {
+        const res = await api.findSchoolCalendar({ fam: famId(), name: school.name, website: school.website || '', district: school.district || '', town: school.town || S().location?.label || '', lat: school.lat, lon: school.lon, grade: g, today: store.isoDate() });
+        const meta = { name: school.name, grade: g, lat: school.lat, lon: school.lon, website: school.website || '', page: res.page || '' };
+        if (res.status === 'feed') return finish({ ...meta, source: 'feed', url: res.url, events: res.events });
+        if (res.status === 'search') return reviewDates(i, { ...meta, source: 'search', sources: res.sources }, res);
+        offerOtherWays(res.reason === 'no-ai'
+          ? `${school.name}'s website doesn't link a calendar feed, and searching the web for it needs AI, which isn't switched on here. Use one of the ways below.`
+          : `Couldn't find ${school.name}'s calendar automatically.${res.note ? ` ${res.note}` : ''} Use one of the ways below.`, res.page);
+      } catch (err) {
+        offerOtherWays(err.message);
+      } finally {
+        if ($('#find-school', el)) $('#find-school', el).disabled = false;
+      }
+    };
+    // 1) Search schools by name near home.
+    $('#finder', el).onsubmit = async (e) => {
+      e.preventDefault();
+      if (!need()) return;
+      results.innerHTML = '';
+      let where = S().location;
+      try {
+        if (!where) {
+          const town = $('[name=town]', el)?.value.trim();
+          if (!town) return status('Add your town or city, so we look for the right school.', true);
+          where = await geocode(town);
+          setLocation(where);
+        }
+        status('Searching…');
+        const found = await api.searchSchools(name(), where);
+        status(found.length ? 'Which one is it?' : '');
+        results.innerHTML = `${found.map((x, n) => `<button class="school-hit" data-hit="${n}"><span><b>${esc(x.name)}</b><span class="meta">${[x.kind === 'preschool' ? 'Preschool / childcare' : 'School', x.district, x.town, `${x.km < 1 ? '<1' : x.km.toFixed(0)} km`].filter(Boolean).map(esc).join(' · ')}</span></span><span aria-hidden="true">›</span></button>`).join('')}
+          <button class="school-hit" data-hit="typed"><span><b>${found.length ? 'Not listed?' : 'No match on the map.'} Use “${esc(name())}”</b><span class="meta">We'll search for it by name${where.label && where.label !== 'Your location' ? ` near ${esc(where.label.split(',')[0])}` : ''}</span></span><span aria-hidden="true">›</span></button>`;
+        $$('[data-hit]', results).forEach((btn) => (btn.onclick = () => pick(btn.dataset.hit === 'typed' ? { name: name(), lat: where.lat, lon: where.lon, town: where.label === 'Your location' ? '' : where.label } : found[Number(btn.dataset.hit)])));
+      } catch (err) { status(err.message, true); }
     };
     $('#school-form', el).onsubmit = async (e) => {
       e.preventDefault();
@@ -511,7 +590,7 @@ function schoolSheet(i, { method = null } = {}) {
       status('Reading the calendar…');
       try {
         const events = parseICS(await api.fetchSchoolFeed(url), { today: store.isoDate() });
-        finish({ name: name(), source: 'feed', url, events });
+        finish({ name: name(), grade: gradeNow(), source: 'feed', url, events });
       } catch (err) { status(err.message, true); }
     };
     $('#ics-file', el).onchange = async (e) => {
@@ -520,7 +599,7 @@ function schoolSheet(i, { method = null } = {}) {
       if (!f || !need()) return;
       try {
         if (f.size > 2_000_000) throw new Error('That file is too big to be a school calendar.');
-        finish({ name: name(), source: 'file', events: parseICS(await f.text(), { today: store.isoDate() }) });
+        finish({ name: name(), grade: gradeNow(), source: 'file', events: parseICS(await f.text(), { today: store.isoDate() }) });
       } catch (err) { status(err.message, true); }
     };
     $('#photo-file', el)?.addEventListener('change', async (e) => {
@@ -532,31 +611,37 @@ function schoolSheet(i, { method = null } = {}) {
         const blob = await store.compressImage(f, 1600, 0.85);
         const image = await new Promise((r, j) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.onerror = () => j(new Error('Could not read the photo.')); fr.readAsDataURL(blob); });
         const res = await api.readSchoolPhoto({ fam: famId(), image, today: store.isoDate(), school: name() });
-        reviewPhotoDates(i, name(), res);
+        reviewDates(i, { name: name(), grade: gradeNow(), source: 'photo' }, res);
       } catch (err) { status(err.message, true); }
     });
   });
 }
 
-// AI-read dates are only saved after the parent has checked them.
-function reviewPhotoDates(i, name, { events, note }) {
+// Dates read by AI (from a photo, or found on the school's website) are only saved after the parent checks them.
+function reviewDates(i, meta, { events, note, sources = [] }) {
+  const { name, grade, source } = meta;
+  const shown = forGrade(events, grade);
+  const hidden = events.filter((e) => !shown.includes(e));
   openSheet(`<h2>Check these dates</h2><p class="meta">${esc(note || 'Here is what I could read.')} Untick anything that's wrong.</p>
-    ${events.length ? `<form id="review" class="col gap-sm">${events.map((e, n) => `<label class="review-row"><input type="checkbox" name="keep" value="${n}" checked />
+    ${sources.length ? `<p class="meta sources-list">From: ${sources.map((u) => `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(new URL(u).hostname)}</a>`).join(' · ')}</p>` : ''}
+    ${hidden.length ? `<p class="fine">${hidden.length} date${hidden.length === 1 ? '' : 's'} for other grades hidden.</p>` : ''}
+    ${shown.length ? `<form id="review" class="col gap-sm">${shown.map((e, n) => `<label class="review-row"><input type="checkbox" name="keep" value="${n}" checked />
       <span><b>${esc(e.title)}</b><span class="meta">${fmtDate(e.date)}${e.end !== e.date ? ` – ${fmtDate(e.end)}` : ''} · ${e.kind === 'off' ? 'No school' : e.kind === 'early' ? 'Early release' : 'Event'}</span></span></label>`).join('')}
       <button class="btn primary big">Save ${esc(name)} dates</button></form>`
-    : '<p class="empty">No dates found in that picture. Try a clearer photo, or paste the calendar link.</p><button class="btn" id="again">Try again</button>'}`,
+    : `<p class="empty">${source === 'photo' ? 'No dates found in that picture. Try a clearer photo, or paste the calendar link.' : 'No dates for this grade.'}</p><button class="btn" id="again">Try another way</button>`}`,
   (el) => {
-    $('#again', el)?.addEventListener('click', () => schoolSheet(i, { method: 'photo' }));
+    $('#again', el)?.addEventListener('click', () => schoolSheet(i, { method: 'choose' }));
     $('#review', el)?.addEventListener('submit', (e) => {
       e.preventDefault();
       const keep = new Set(new FormData(e.target).getAll('keep').map(Number));
       const prev = schoolOf(i);
-      const kept = events.filter((_, n) => keep.has(n));
-      // Photos add to what's there (a newsletter at a time); a new school name starts fresh.
-      const merged = prev && prev.source === 'photo' && prev.name === name ? [...prev.events, ...kept] : kept;
+      const kept = [...shown.filter((_, n) => keep.has(n)), ...hidden];
+      // Photos add to what's there (a newsletter at a time); a new school name or source starts fresh.
+      const merged = prev && prev.source === source && prev.name === name && source === 'photo' ? [...prev.events, ...kept] : kept;
       const uniq = [...new Map(merged.map((x) => [`${x.date}|${x.title}`, x])).values()].sort((a, b) => a.date.localeCompare(b.date));
-      saveSchool(i, { name, source: 'photo', events: uniq });
-      toast(`Saved ${kept.length} date${kept.length === 1 ? '' : 's'}`);
+      saveSchool(i, { ...meta, sources, events: uniq });
+      const n = shown.filter((_, k) => keep.has(k)).length;
+      toast(`Saved ${n} date${n === 1 ? '' : 's'}`);
       schoolSheet(i);
       rerender();
     });
@@ -737,7 +822,7 @@ function classesSheet() {
 async function makePlan({ vibe, note }) {
   const { key, days } = weekendModel();
   const live = days.filter((d) => !d.past);
-  const ctx = { ages: kidAges(), vibe, recentIds: S().recent, favIds: S().favs };
+  const ctx = { ages: kidAges(), vibe, recentIds: S().recent, favIds: S().favs, taste: taste() };
   let plan = { vibe, picks: {}, done: {}, message: '' };
   const btn = $('#plan-btn');
   if (api.aiEnabled()) {
@@ -770,7 +855,7 @@ function swap(winId) {
   const d = days.find((x) => x.windows.some((w) => w.id === winId));
   const w = d.windows.find((x) => x.id === winId);
   const exclude = [...Object.values(plan.picks).map((p) => p.id), ...(plan.swapped?.[winId] || [])];
-  const a = swapPick(d, w, { ages: kidAges(), vibe: plan.vibe, exclude, favIds: S().favs }, Date.now());
+  const a = swapPick(d, w, { ages: kidAges(), vibe: plan.vibe, exclude, favIds: S().favs, taste: taste() }, Date.now());
   if (!a) return toast('No other ideas fit this slot. Try a different one.');
   store.set((s) => {
     const pl = s.weekends[key];
@@ -1065,7 +1150,7 @@ async function runTool(name, input) {
       const live = m.days.filter((d) => !d.past);
       if (!live.some((d) => d.windows.length)) return fail('There are no free slots that weekend.');
       const vibe = VIBES[input.vibe] ? input.vibe : 'mix';
-      const picks = fillWeekend(live, { ages: kidAges(), vibe, recentIds: S().recent, favIds: S().favs });
+      const picks = fillWeekend(live, { ages: kidAges(), vibe, recentIds: S().recent, favIds: S().favs, taste: taste() });
       store.set((s) => { s.weekends[m.key] = { vibe, picks, done: {}, message: '' }; s.lastVibe = vibe; });
       return { ok: true, planned: weekendStateText(off) };
     }

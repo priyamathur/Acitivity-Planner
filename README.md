@@ -49,7 +49,11 @@ One-time setup: **Settings → Pages → Build and deployment → Source: GitHub
 `_headers` sets a Content-Security-Policy (scripts only from the app itself), `nosniff`, `X-Frame-Options: DENY`, and referrer and permissions policies. Cloudflare serves it; GitHub Pages ignores it, which is one more reason to prefer the Cloudflare deploy.
 
 ## School calendars
-Profile → a child → **Link school**. LittleRoam reads only dates (days off, early release, events), never grades, messages or logins.
+Profile → a child → **Link school** → type the school's name and the child's grade → pick it from the list. LittleRoam reads only dates (days off, early release, events), never grades, messages or logins.
+- **Automatic (needs the Worker):** `/api/schools` finds the school on OpenStreetMap; `/api/school-calendar` then (1) reuses what another family found, (2) looks for a calendar feed on the school's website, or (3) asks Claude (web search) for the official calendar and returns the dates for the parent to check. Results are cached in the Durable Object, keyed on the school name, area, website, town and district, so one request can't change another family's result. Uses the `AI_DAILY_LIMIT`.
+- On GitHub Pages the search still works (straight from OpenStreetMap), but finding the calendar falls back to the options below.
+
+Other ways:
 - **Paste a calendar link** (`https://…` or `webcal://…`, usually from a “Subscribe” / “iCal” button). With the Worker deployed, `/api/school-feed` fetches it (school sites usually block browsers from reading feeds directly) and the app refreshes it daily. It only fetches public hostnames and only passes back real calendar files. Limit: `SCHOOL_FEED_DAILY_LIMIT` per network (default 60).
 - **Import a .ics file.** Works on GitHub Pages too.
 - **Snap the newsletter.** `/api/school-photo` sends the photo to Claude, which lists the dates; the parent checks them before saving. Shares the `AI_DAILY_LIMIT`.
