@@ -37,7 +37,7 @@ jobs:
         run: npm run test:mcp
       - name: Install browser
         run: |
-          npm install --no-save playwright@1.56.1
+          npm install --no-save playwright@1.56.1 axe-core@4
           npx playwright install --with-deps chromium
       - name: Browser tests (static, no server)
         run: npm run test:e2e
@@ -45,6 +45,10 @@ jobs:
         run: npm run test:e2e-ai
       - name: Browser tests (chat)
         run: npm run test:e2e-chat
+      - name: Accessibility, security and robustness audit
+        run: npm run test:audit
+      - name: Offline, keyboard, time zones, failing networks, performance
+        run: npm run test:resilience
 
   # Full app with AI + Popular near you. Runs once these repo secrets exist:
   # CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, ANTHROPIC_API_KEY.

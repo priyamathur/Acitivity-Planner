@@ -37,6 +37,11 @@ try {
   const home = await fetch(BASE + '/');
   assert.equal(home.status, 200);
   assert.match(await home.text(), /LittleRoam/);
+  // Security headers on the app and the API.
+  assert.match(home.headers.get('content-security-policy') || '', /default-src 'self'; script-src 'self'/, 'CSP served from _headers');
+  assert.equal(home.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(home.headers.get('x-frame-options'), 'DENY');
+  assert.equal((await fetch(BASE + '/api/health')).headers.get('x-content-type-options'), 'nosniff');
 
   // --- Community: k-anonymity threshold ---
   const cell = '953:-2447';

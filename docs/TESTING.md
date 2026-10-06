@@ -1,11 +1,11 @@
 # LittleRoam: test report
 
 **Last run:** 7 Oct 2026 (the browser tests pin the date to Wednesday 7 Oct 2026, so this weekend is 10–11 Oct)
-**Result:** ✅ all suites pass: 26 unit tests, 5 end-to-end suites. CI runs every suite on every PR and on every push to `main`.
+**Result:** ✅ all suites pass: 28 unit tests, 5 end-to-end suites, plus a production audit and a resilience suite. CI runs every suite on every PR and on every push to `main`.
 
 | Suite | Command | What it runs | Result |
 |---|---|---|---|
-| Unit | `npm test` | Planning engine, privacy helpers, AI output validation, school calendar parsing (Node) | ✅ 26 / 26 |
+| Unit | `npm test` | Planning engine, privacy helpers, AI output validation, school calendar parsing, safe loading of saved data, safe map links (Node) | ✅ 28 / 28 |
 | API | `npm run test:api` | The real server (Cloudflare Worker via `wrangler dev`) with a mock Claude API | ✅ |
 | Browser, no server | `npm run test:e2e` | Full app in Chromium, as hosted on GitHub Pages (no AI) | ✅ |
 | Browser, AI planning | `npm run test:e2e-ai` | App + server + mock Claude: AI weekend plan, Popular near you | ✅ |
@@ -13,6 +13,13 @@
 | MCP | `npm run test:mcp` | The official MCP client connects to the Worker's `/mcp` and calls all 5 tools (map, geocoding and weather use local fixtures) | ✅ |
 
 > **What is mocked.** My build environment can't reach the internet, so these services are replaced with fakes that return realistic data: OpenStreetMap places, Open-Meteo weather and the **Claude API**. Every message *we send* to Claude is checked (model, tools, safety settings, privacy). Claude's *answers* in these tests are scripted. **Run the "Live checks" list at the end once the app is deployed with a real key.**
+
+| Production audit | `npm run test:audit` | axe-core WCAG 2.1 AA on 24 screens and sheets (light + dark); XSS through every user-controlled field; unsafe links from map data; damaged/old/wrong-type saved data; 320 px → desktop and 150% text | ✅ 0 violations |
+| Resilience | `npm run test:resilience` | Keyboard-only use and focus handling; offline after first visit (service worker); 4 time zones incl. Sunday night and New Year's Eve; weather/map APIs down, rate-limited or slow; load time on a throttled phone | ✅ 33 / 33 |
+
+**Performance (throttled: ~1.6 Mbps, 150 ms latency, 4× slower CPU):** ideas visible in ~1.8 s, first paint ~0.7 s, 189 KB of app files before compression, 3 tab switches in ~0.2 s. Measured in headless Chromium on a test machine, so treat these as a rough guide, not a real-phone measurement.
+
+**Not covered here:** real Safari/iOS and Firefox (only Chromium is installed in my test environment, so phones are emulated in Chromium), a screen reader by ear, the live Claude API, real map/weather services and the real Grand Ridge feed.
 
 ## Use cases covered
 
@@ -108,6 +115,14 @@
 6. Profile: with no family name the avatar showed a broken character (half an emoji)
 7. School form: the browser's own "required" check hid the app's clearer message
 8. Editing the kids list could have attached a school or class to the wrong child (they're now re-mapped)
+9. **Security:** a `javascript:` "website" in OpenStreetMap data was shown as a clickable link (now only http/https links are shown, in the app and the MCP server)
+10. Damaged or wrong-type saved data (e.g. after a browser crash) made every screen blank; saved data is now checked field by field on load and on backup import
+11. While fixing #10, a load-order mistake would have shown an empty app and then **overwritten the family's real data** on the next save; caught by a new unit test before shipping
+12. Sideways scrolling on 320–360 px phones (Home filters, Weekend header, long names)
+13. Accessibility: sheets weren't announced as named dialogs; focus didn't move into sheets, stay in them, or return on close; card buttons' spoken names didn't match their text; white-on-green text failed contrast in dark mode
+14. Offline, Places showed the raw browser error "Failed to fetch"
+15. School feed server followed redirects blindly (a public link could bounce to a private address); each hop is now checked. Added CSP and other security headers
+16. If phone storage is full or blocked (private browsing), changes were silently lost; the app now says so
 
 ## Live checks to run after deploying (needs the real Claude key)
 - School link: on the Grand Ridge calendar page (grandridge.isd411.org → Upcoming events → Calendar) look for a Subscribe / iCal option, paste it in Profile → Leo → Link school, and check a known day off. **Not verified yet:** my sandbox can't reach the site, so I don't know if its feed is iCal (works) or only RSS (won't).

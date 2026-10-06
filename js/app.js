@@ -63,15 +63,36 @@ function show(view) {
 function openSheet(html, onMount) {
   const sheet = $('#sheet');
   $('#sheet-body').innerHTML = html;
+  // Name the dialog after its heading, for screen readers.
+  const h = $('#sheet-body h2');
+  if (h) { h.id = 'sheet-title'; $('.sheet-panel').setAttribute('aria-labelledby', 'sheet-title'); } else $('.sheet-panel').setAttribute('aria-label', 'Details');
+  if (sheet.hidden) openSheet.returnTo = document.activeElement;
   sheet.hidden = false;
   requestAnimationFrame(() => sheet.classList.add('open'));
   onMount?.($('#sheet-body'));
+  // Keyboard and screen-reader users land in the sheet, on its heading.
+  const title = $('#sheet-title');
+  if (title) { title.tabIndex = -1; title.focus({ preventScroll: true }); } else $('.sheet-close').focus({ preventScroll: true });
 }
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+// Keep Tab inside an open sheet.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Tab' || $('#sheet').hidden) return;
+  const items = $$(FOCUSABLE, $('.sheet-panel')).filter((x) => x.offsetParent !== null || x === document.activeElement);
+  if (!items.length) return;
+  const first = items[0], last = items.at(-1);
+  if (!$('.sheet-panel').contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+  else if (e.shiftKey && (document.activeElement === first || document.activeElement.id === 'sheet-title')) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+});
 function closeSheet() {
   const sheet = $('#sheet');
   if (sheet.hidden) return;
   sheet.classList.remove('open');
   sheet.hidden = true;
+  const back = openSheet.returnTo;
+  openSheet.returnTo = null;
+  if (back?.isConnected) back.focus({ preventScroll: true });
   if (location.hash.startsWith('#a/')) history.replaceState(null, '', '#' + ($('main').dataset.view || 'home'));
 }
 const VIEW_RENDER = { home: (r) => renderHome(r), weekend: (r) => renderWeekend(r), chat: (r) => renderChat(r), near: (r) => renderNear(r), ideas: (r) => renderIdeas(r), memories: (r) => renderMemories(r), discover: (r) => renderDiscover(r), profile: (r) => renderProfile(r) };
@@ -81,7 +102,7 @@ const rerender = () => { const v = $('main').dataset.view; if (v) VIEW_RENDER[v]
 function card(a, { compact = false, why = '', place = '' } = {}) {
   const fav = S().favs.includes(a.id);
   return `<article class="card act" data-id="${a.id}" data-cat="${a.cat}">
-    <button class="act-main" data-open="${a.id}" aria-label="Open ${esc(a.title)}">
+    <button class="act-main" data-open="${a.id}">
       <span class="act-emoji" aria-hidden="true">${esc(a.emoji)}</span>
       <span class="act-text">
         <strong>${esc(a.title)}${a.ai ? ' <span class="chip sm ai">AI</span>' : ''}</strong>
@@ -298,7 +319,7 @@ function discoverPicks() {
 function pin(a, i, { tag = '', why = '' } = {}) {
   const fav = S().favs.includes(a.id);
   return `<article class="pin" data-cat="${a.cat}" data-id="${a.id}">
-    <button class="pin-main" data-open="${a.id}" aria-label="Open ${esc(a.title)}">
+    <button class="pin-main" data-open="${a.id}">
       <span class="pin-art h${i % 3}"><span class="pin-tag">${esc(tag || `${audLabel(a)} · ${settingLabel[a.setting]}`)}</span><span class="pin-emoji" aria-hidden="true">${esc(a.emoji)}</span></span>
       <span class="pin-text"><strong>${esc(a.title)}</strong><span class="meta">${why ? esc(why) : `${fmtMins(a.mins)} · ages ${a.ages[0]}–${a.ages[1]}`}</span></span>
     </button>
@@ -1533,6 +1554,8 @@ async function loadForecast() {
 $('#sheet').addEventListener('click', (e) => { if (e.target.id === 'sheet') closeSheet(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); });
 window.addEventListener('hashchange', route);
+// If the phone's storage is full (or blocked, e.g. some private modes), say so instead of silently losing changes.
+store.subscribe(() => { if (store.lastSaveFailed()) toast("Couldn't save on this phone. Storage may be full or blocked (private browsing)."); });
 route();
 loadForecast();
 // Turn on AI and Popular-near-you once we know the server supports them.
@@ -1543,7 +1566,7 @@ api.checkHealth().then(async () => {
 });
 if (!S().onboarded && !location.hash.startsWith('#a/')) onboarding();
 
-if ('serviceWorker' in navigator && location.protocol === 'https:') {
+if ('serviceWorker' in navigator && window.isSecureContext) {
   navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
 

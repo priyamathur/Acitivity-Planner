@@ -172,3 +172,35 @@ test('location is coarsened to a grid cell; neighbours cover edges', () => {
   assert.ok(!isValidCell('47.6,-122.3'));
   assert.deepEqual(bandsForAges([2, 3, 5, 11]), ['0-3', '4-5', '9-12']);
 });
+
+test('saved data is loaded safely (old, partial and corrupted saves)', async () => {
+  const saved = { family: { name: 'Mathur', kids: [{ name: 'Mia', birthYear: 2021 }, 'junk'] }, classes: [{ id: 'a', title: 'Ballet', day: 'sat', start: '10:00', end: '11:00', kid: 0 }, { id: 'b', title: 'Bad', days: ['sat'], start: '25:00', end: '11:00' }], schools: [{ name: 'Grand Ridge', kid: 1, events: [{ date: '2026-10-09', title: 'No School', end: 'bad' }, { date: 'x', title: 'y' }] }], weekends: { '2026-10-10': { picks: {} }, bad: 5 }, memories: {}, favs: 'a', plusInterest: true };
+  const store = { data: JSON.stringify(saved), getItem() { return this.data; }, setItem(k, v) { this.data = v; }, removeItem() {} };
+  globalThis.localStorage = store;
+  const m = await import('../js/store.js?load-test');
+  const s = m.get();
+  assert.equal(s.family.name, 'Mathur', 'real data must survive loading');
+  assert.equal(s.family.kids.length, 1);
+  assert.deepEqual(s.classes.map((c) => [c.id, c.kid]), [['a', '0']], 'old single-day class kept, impossible time dropped');
+  assert.deepEqual(s.schools[0].events, [{ date: '2026-10-09', title: 'No School', end: '2026-10-09' }]);
+  assert.equal(s.schools[0].kid, '1');
+  assert.deepEqual(Object.keys(s.weekends), ['2026-10-10']);
+  assert.deepEqual([s.memories, s.favs, s.plusInterest], [[], [], true]);
+  for (const bad of [null, 5, 'x', [], { family: null, classes: null, schools: null }]) {
+    const d = m.sanitize(bad);
+    assert.ok(Array.isArray(d.family.kids) && Array.isArray(d.classes) && Array.isArray(d.schools) && Array.isArray(d.memories));
+  }
+  // A corrupted save loads defaults instead of crashing.
+  store.data = '{not json';
+  const m2 = await import('../js/store.js?corrupt-test');
+  assert.deepEqual(m2.get().family, { name: '', kids: [] });
+  assert.throws(() => m2.importJSON('{"family":{}}'), /Not a LittleRoam backup/);
+});
+
+test('map websites: only plain web links are shown', async () => {
+  const { safeWebsite } = await import('../js/near.js');
+  assert.equal(safeWebsite('https://pool.example.org/lessons'), 'https://pool.example.org/lessons');
+  assert.equal(safeWebsite('www.pool.example.org'), 'https://www.pool.example.org/');
+  assert.equal(safeWebsite('https://a.org; https://b.org'), 'https://a.org/');
+  for (const bad of ['javascript:alert(1)', 'JAVASCRIPT:alert(1)', 'data:text/html,<b>x</b>', 'vbscript:x', 'mailto:a@b.c', 'localhost', '', null, 5]) assert.equal(safeWebsite(bad), null, String(bad));
+});

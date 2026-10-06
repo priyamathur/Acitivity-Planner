@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:site": "cd .. && rm -rf _site && mkdir _site && cp -r index.html manifest.webmanifest sw.js css js icons _site/",
+    "build:site": "cd .. && rm -rf _site && mkdir _site && cp -r index.html manifest.webmanifest sw.js _headers css js icons _site/",
     "dev": "npm run build:site && wrangler dev",
     "deploy": "npm run build:site && wrangler deploy"
   },

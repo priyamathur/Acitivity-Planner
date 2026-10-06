@@ -23,10 +23,18 @@ export async function fetchICS(raw) {
   const href = feedUrlOk(raw);
   if (!href) throw new AIError("That doesn't look like a calendar link. It should start with https:// or webcal://.", 400);
   let res;
-  try {
-    res = await fetch(href, { headers: { accept: 'text/calendar, */*;q=0.5', 'user-agent': 'LittleRoam/1.0 (family planner; school calendar subscribe)' }, redirect: 'follow', signal: AbortSignal.timeout(10000) });
-  } catch {
-    throw new AIError("Couldn't reach that calendar. Check the link, or download the .ics file and import it instead.", 502);
+  let next = href;
+  // Follow redirects by hand so every hop is checked (a public link must not bounce to a private host).
+  for (let hop = 0; ; hop++) {
+    try {
+      res = await fetch(next, { headers: { accept: 'text/calendar, */*;q=0.5', 'user-agent': 'LittleRoam/1.0 (family planner; school calendar subscribe)' }, redirect: 'manual', signal: AbortSignal.timeout(10000) });
+    } catch {
+      throw new AIError("Couldn't reach that calendar. Check the link, or download the .ics file and import it instead.", 502);
+    }
+    if (res.status < 300 || res.status >= 400 || !res.headers.get('location')) break;
+    const to = feedUrlOk(new URL(res.headers.get('location'), next).href);
+    if (!to || hop >= 4) throw new AIError('That calendar link redirects somewhere we can\'t follow. Try the link the school gives for “Subscribe” or “iCal”.', 502);
+    next = to;
   }
   if (!res.ok) throw new AIError(`The school's calendar server said “${res.status}”. Check the link is the public “Subscribe” / iCal link.`, 502);
   const reader = res.body.getReader();

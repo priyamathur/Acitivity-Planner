@@ -32,6 +32,8 @@ const page = await ctx.newPage();
 await ctx.route('https://fonts.googleapis.com/**', (r) => r.fulfill({ contentType: 'text/css', body: '' }));
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
+// The app must work under its Content-Security-Policy.
+page.on('console', (m) => /Content Security Policy|Refused to/.test(m.text()) && errors.push('CSP: ' + m.text()));
 await page.route('https://overpass-api.de/**', (r) => r.fulfill({ json: { elements: [{ type: 'node', id: 7, lat: 47.61, lon: -122.33, tags: { name: 'Queen Anne Pool', website: 'https://example.org/pool' } }] } }));
 await page.route('https://api.open-meteo.com/**', (r) => r.fulfill({ json: { daily: { time: ['2026-10-10', '2026-10-11', '2026-10-17', '2026-10-18'], weather_code: [1, 1, 2, 63], temperature_2m_max: [17, 16, 15, 12], precipitation_probability_max: [5, 10, 20, 80] }, daily_units: { temperature_2m_max: '°C' } } }));
 await page.addInitScript(() => {

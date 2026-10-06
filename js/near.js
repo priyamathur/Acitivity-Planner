@@ -39,6 +39,27 @@ export function buildQuery(type, lat, lon, radiusM) {
   return `[out:json][timeout:25];(${parts});out center tags 80;`;
 }
 
+// Map data is user-edited: only plain web links are ever shown (no javascript: etc.).
+// fetch() with a message a parent can act on when the phone is offline or the server is unreachable.
+async function net(url, opts) {
+  try {
+    return await fetch(url, opts);
+  } catch (e) {
+    if (e.name === 'AbortError') throw e;
+    throw new Error(navigator.onLine === false ? "You're offline. Places need an internet connection; your plans and ideas still work." : "Couldn't reach the map service. Check your connection and try again.");
+  }
+}
+
+export function safeWebsite(raw) {
+  if (typeof raw !== 'string') return null;
+  const v = raw.trim().split(';')[0].trim();
+  const withScheme = /^[a-z][a-z0-9+.-]*:/i.test(v) ? v : `https://${v}`;
+  try {
+    const u = new URL(withScheme);
+    return /^https?:$/.test(u.protocol) && u.hostname.includes('.') ? u.href : null;
+  } catch { return null; }
+}
+
 export function parsePlaces(json, origin, type) {
   const seen = new Set();
   return (json.elements || [])
@@ -56,7 +77,7 @@ export function parsePlaces(json, origin, type) {
         type,
         lat, lon,
         km: haversineKm(origin, { lat, lon }),
-        website: tags.website || tags['contact:website'] || null,
+        website: safeWebsite(tags.website || tags['contact:website']),
         hours: tags.opening_hours || null,
         fee: tags.fee || null,
         wheelchair: tags.wheelchair || null,
@@ -70,13 +91,13 @@ export function parsePlaces(json, origin, type) {
 
 export async function findPlaces(type, origin, radiusKm = 5, { signal, endpoint = OVERPASS } = {}) {
   const body = 'data=' + encodeURIComponent(buildQuery(type, origin.lat, origin.lon, Math.round(radiusKm * 1000)));
-  const res = await fetch(endpoint, { method: 'POST', body, headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal });
+  const res = await net(endpoint, { method: 'POST', body, headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal });
   if (!res.ok) throw new Error(`Place search failed (${res.status}). The free map server may be busy — try again in a minute.`);
   return parsePlaces(await res.json(), origin, type);
 }
 
 export async function geocode(q) {
-  const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`, { headers: { Accept: 'application/json' } });
+  const res = await net(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`, { headers: { Accept: 'application/json' } });
   if (!res.ok) throw new Error('Location search failed.');
   const [hit] = await res.json();
   if (!hit) throw new Error(`Couldn't find "${q}". Try a city or postcode.`);

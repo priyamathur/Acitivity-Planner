@@ -45,6 +45,9 @@ Settings live in `worker/wrangler.toml`:
 ### B. Static app without AI: GitHub Pages
 One-time setup: **Settings → Pages → Build and deployment → Source: GitHub Actions**. The site goes live at `https://<user>.github.io/<repo>/`. The AI and community features switch themselves off when no server is present.
 
+## Security headers
+`_headers` sets a Content-Security-Policy (scripts only from the app itself), `nosniff`, `X-Frame-Options: DENY`, and referrer and permissions policies. Cloudflare serves it; GitHub Pages ignores it, which is one more reason to prefer the Cloudflare deploy.
+
 ## School calendars
 Profile → a child → **Link school**. LittleRoam reads only dates (days off, early release, events), never grades, messages or logins.
 - **Paste a calendar link** (`https://…` or `webcal://…`, usually from a “Subscribe” / “iCal” button). With the Worker deployed, `/api/school-feed` fetches it (school sites usually block browsers from reading feeds directly) and the app refreshes it daily. It only fetches public hostnames and only passes back real calendar files. Limit: `SCHOOL_FEED_DAILY_LIMIT` per network (default 60).

@@ -14,7 +14,7 @@ const PLACE_TYPES = new Set(['playground', 'park', 'nature', 'library', 'museum'
 
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
-  headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+  headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' },
 });
 const bad = (msg, status = 400) => json({ error: msg }, status);
 
@@ -165,7 +165,7 @@ export default {
         if (!usage.ok) return bad('Too many calendar refreshes today. Try again tomorrow.', 429);
         try {
           const text = await fetchICS(url.searchParams.get('url'));
-          return new Response(text, { headers: { 'content-type': 'text/calendar; charset=utf-8', 'cache-control': 'no-store' } });
+          return new Response(text, { headers: { 'content-type': 'text/calendar; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; sandbox" } });
         } catch (err) {
           if (err instanceof AIError) return bad(err.message, err.status);
           throw err;

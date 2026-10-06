@@ -31,6 +31,8 @@ const page = await ctx.newPage();
 await ctx.route('https://fonts.googleapis.com/**', (r) => r.fulfill({ contentType: 'text/css', body: '' }));
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
+// The app must work under its Content-Security-Policy.
+page.on('console', (m) => /Content Security Policy|Refused to/.test(m.text()) && errors.push('CSP: ' + m.text()));
 await page.route('https://overpass-api.de/**', (r) => r.fulfill({ json: { elements: [
   { type: 'node', id: 11, lat: 47.607, lon: -122.333, tags: { name: 'Pioneer Square Playground' } },
 ] } }));
