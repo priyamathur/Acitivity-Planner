@@ -73,6 +73,11 @@ export function startMockAnthropic(port = 9911) {
     req.on('end', () => {
       const parsed = body ? JSON.parse(body) : {};
       requests.push({ url: req.url, headers: req.headers, body: parsed });
+      // Accounts without the server-side fallback option reject it; others reject a bad request.
+      const all = JSON.stringify(parsed.messages || []);
+      const bad = (message) => { res.writeHead(400, { 'content-type': 'application/json' }); res.end(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message } })); };
+      if (all.includes('NOFALLBACK') && parsed.fallbacks) return bad('fallbacks: Extra inputs are not permitted');
+      if (all.includes('BADREQ')) return bad('messages.0.content.0: example of a rejected request');
       // School calendar search: one paused web search, then the report.
       if (Array.isArray(parsed.tools) && parsed.tools.some((t) => t.name === 'report_school_calendar')) {
         const ask = textOf(parsed.messages[0]);

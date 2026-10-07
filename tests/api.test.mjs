@@ -156,6 +156,25 @@ try {
   assert.equal(cr.status, 200);
   cr = await chatPost({ fam: 'family-chat1', messages: [{ role: 'user', content: [{ type: 'text', text: 'again' }] }] });
   assert.equal((await cr.json()).remaining, before - 1, 'only new user messages are counted');
+  // An account without the server-side fallback option: retried once without it, and it works.
+  const before2 = mock.requests.length;
+  cr = await chatPost({ fam: 'family-chat2', messages: [{ role: 'user', content: [{ type: 'text', text: 'NOFALLBACK hello' }] }] });
+  assert.equal(cr.status, 200, await cr.clone().text());
+  const tries = mock.requests.slice(before2);
+  assert.equal(tries.length, 2, 'one retry');
+  assert.equal(tries[0].body.fallbacks, 'default');
+  assert.equal(tries[1].body.fallbacks, undefined, 'retry drops the fallback option');
+  assert.doesNotMatch(tries[1].headers['anthropic-beta'] || '', /server-side-fallback/);
+  // Any other rejected request shows Anthropic's reason (so problems can be fixed), and isn't retried.
+  const before3 = mock.requests.length;
+  cr = await chatPost({ fam: 'family-chat2', messages: [{ role: 'user', content: [{ type: 'text', text: 'BADREQ' }] }] });
+  assert.equal(cr.status, 400);
+  assert.match((await cr.json()).error, /couldn't continue this chat.*example of a rejected request/);
+  assert.equal(mock.requests.length - before3, 1);
+  r = await post('/api/ai', { ...aiBody, fam: 'family-zzzz8', note: 'BADREQ' });
+  assert.equal(r.status, 502);
+  assert.match((await r.json()).error, /AI request failed \(400: messages\.0\.content\.0: example of a rejected request\)/);
+
   // Oversized conversations are refused with a clear message.
   cr = await chatPost({ fam: 'family-chat1', messages: [{ role: 'user', content: 'x'.repeat(500000) }] });
   assert.equal(cr.status, 413);

@@ -4,7 +4,7 @@
 // read them directly), and reading dates off a newsletter photo with Claude.
 import Anthropic from '@anthropic-ai/sdk';
 import { normaliseFeedUrl, cleanEvents, parseICS, extractCalendarLinks, gradeLabel } from '../../js/school.js';
-import { AIError } from './ai.js';
+import { AIError, createMessage, aiError } from './ai.js';
 
 const MAX_ICS = 2_000_000;
 const MAX_PAGE = 1_500_000;
@@ -144,7 +144,7 @@ export async function searchSchoolCalendar(env, { name, town, district, website,
   for (let step = 0; step < 6; step++) {
     let res;
     try {
-      res = await client.beta.messages.create({
+      res = await createMessage(client, {
         model: env.AI_MODEL || 'claude-opus-5-5',
         max_tokens: 16000,
         betas: ['server-side-fallback-2026-07-01'],
@@ -155,10 +155,7 @@ export async function searchSchoolCalendar(env, { name, town, district, website,
         messages,
       });
     } catch (err) {
-      if (err instanceof Anthropic.RateLimitError) throw new AIError('The AI is busy right now. Please try again in a minute.', 503);
-      if (err instanceof Anthropic.AuthenticationError) throw new AIError('AI is not configured correctly on the server.', 503);
-      if (err instanceof Anthropic.APIError) throw new AIError(`AI request failed (${err.status ?? 'network'}).`, 502);
-      throw err;
+      throw aiError(err);
     }
     if (res.stop_reason === 'refusal') throw new AIError("The AI couldn't look that up.", 422);
     const report = res.content.find((b) => b.type === 'tool_use' && b.name === REPORT_TOOL.name);
@@ -211,7 +208,7 @@ export async function datesFromPhoto(env, { image, mediaType, today, school }) {
   });
   let response;
   try {
-    response = await client.beta.messages.create({
+    response = await createMessage(client, {
       model: env.AI_MODEL || 'claude-opus-5-5',
       max_tokens: 8000,
       betas: ['server-side-fallback-2026-07-01'],
@@ -227,10 +224,7 @@ export async function datesFromPhoto(env, { image, mediaType, today, school }) {
       }],
     });
   } catch (err) {
-    if (err instanceof Anthropic.RateLimitError) throw new AIError('The AI is busy right now. Please try again in a minute.', 503);
-    if (err instanceof Anthropic.AuthenticationError) throw new AIError('AI is not configured correctly on the server.', 503);
-    if (err instanceof Anthropic.APIError) throw new AIError(`AI request failed (${err.status ?? 'network'}).`, 502);
-    throw err;
+    throw aiError(err);
   }
   if (response.stop_reason === 'refusal') throw new AIError("The AI couldn't read that picture.", 422);
   let raw;
