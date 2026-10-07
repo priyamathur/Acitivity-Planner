@@ -169,6 +169,36 @@ export class AIError extends Error {
   }
 }
 
+// Anthropic's own reason for a failed request (no secrets in it), for logs and for the parent.
+export const apiReason = (err) => String(err?.error?.error?.message || err?.message || '').replace(/\s+/g, ' ').slice(0, 240);
+
+// Every Claude call goes through here. The server-side fallback option isn't enabled on
+// every account; if the API rejects it, the same request is retried once without it.
+export async function createMessage(client, params) {
+  try {
+    return await client.beta.messages.create(params);
+  } catch (err) {
+    if (err instanceof Anthropic.BadRequestError && params.fallbacks && /fallback|beta/i.test(apiReason(err))) {
+      console.warn('Claude rejected the fallback option; retrying without it:', apiReason(err));
+      const { fallbacks, betas = [], ...rest } = params;
+      const keep = betas.filter((b) => !b.startsWith('server-side-fallback'));
+      return client.beta.messages.create({ ...rest, ...(keep.length ? { betas: keep } : {}) });
+    }
+    throw err;
+  }
+}
+
+// Turn an SDK error into a message a parent (or the person running the app) can act on.
+export function aiError(err, { badRequest } = {}) {
+  if (!(err instanceof Anthropic.APIError)) return err;
+  const why = apiReason(err);
+  console.error('Claude API error', err.status, why);
+  if (err instanceof Anthropic.RateLimitError) return new AIError('The AI is busy right now. Please try again in a minute.', 503);
+  if (err instanceof Anthropic.AuthenticationError || err instanceof Anthropic.PermissionDeniedError) return new AIError(`AI is not configured correctly on the server (${why || err.status}). Check the ANTHROPIC_API_KEY secret.`, 503);
+  if (err instanceof Anthropic.BadRequestError && badRequest) return new AIError(`${badRequest} (${why})`, 400);
+  return new AIError(`AI request failed (${err.status ?? 'network'}${why ? `: ${why}` : ''}).`, 502);
+}
+
 export async function suggest(env, ctx) {
   const client = new Anthropic({
     apiKey: env.ANTHROPIC_API_KEY,
@@ -177,7 +207,7 @@ export async function suggest(env, ctx) {
   });
   let response;
   try {
-    response = await client.beta.messages.create({
+    response = await createMessage(client, {
       model: env.AI_MODEL || 'claude-opus-5-5',
       max_tokens: 16000,
       betas: ['server-side-fallback-2026-07-01'],
@@ -187,10 +217,7 @@ export async function suggest(env, ctx) {
       messages: [{ role: 'user', content: buildUserPrompt(ctx) }],
     });
   } catch (err) {
-    if (err instanceof Anthropic.RateLimitError) throw new AIError('The AI is busy right now. Please try again in a minute.', 503);
-    if (err instanceof Anthropic.AuthenticationError) throw new AIError('AI is not configured correctly on the server.', 503);
-    if (err instanceof Anthropic.APIError) throw new AIError(`AI request failed (${err.status ?? 'network'}).`, 502);
-    throw err;
+    throw aiError(err);
   }
   if (response.stop_reason === 'refusal') throw new AIError('The AI could not help with that request. Try rephrasing it.', 422);
   const text = response.content.filter((b) => b.type === 'text').map((b) => b.text).join('');

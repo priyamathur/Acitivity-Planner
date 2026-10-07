@@ -4,7 +4,7 @@
 // key, then makes one Claude call per step. The browser drives the loop:
 // it sends messages, runs any tool calls, then sends the results back.
 import Anthropic from '@anthropic-ai/sdk';
-import { CATALOG, AIError } from './ai.js';
+import { CATALOG, AIError, createMessage, aiError } from './ai.js';
 
 const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 const PLACE_TYPES = ['playground', 'park', 'nature', 'library', 'museum', 'animals', 'water', 'picnic', 'market', 'treat'];
@@ -94,7 +94,7 @@ export async function chatStep(env, messages) {
     maxRetries: 1,
   });
   try {
-    const response = await client.beta.messages.create({
+    const response = await createMessage(client, {
       model: env.AI_MODEL || 'claude-opus-5-5',
       max_tokens: 16000,
       betas: ['server-side-fallback-2026-07-01'],
@@ -107,11 +107,7 @@ export async function chatStep(env, messages) {
     });
     return { content: response.content, stop_reason: response.stop_reason };
   } catch (err) {
-    if (err instanceof Anthropic.RateLimitError) throw new AIError('The AI is busy right now. Please try again in a minute.', 503);
-    if (err instanceof Anthropic.AuthenticationError) throw new AIError('AI is not configured correctly on the server.', 503);
-    if (err instanceof Anthropic.BadRequestError) throw new AIError('This chat got into a state the AI could not continue. Please start a new chat.', 400);
-    if (err instanceof Anthropic.APIError) throw new AIError(`AI request failed (${err.status ?? 'network'}).`, 502);
-    throw err;
+    throw aiError(err, { badRequest: "The AI couldn't continue this chat. Please start a new chat" });
   }
 }
 
