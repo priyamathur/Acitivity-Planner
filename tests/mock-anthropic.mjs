@@ -62,7 +62,11 @@ function chatReply(messages) {
 
 function reply(res, parsed, { stop_reason, content }) {
   res.writeHead(200, { 'content-type': 'application/json' });
-  res.end(JSON.stringify({ id: 'msg_mock', type: 'message', role: 'assistant', model: parsed.model, content, stop_reason, stop_details: null, usage: { input_tokens: 1, output_tokens: 1 } }));
+  // "EXPENSIVE" in the conversation reports a very costly reply, to test the monthly budget cap.
+  const usage = JSON.stringify(parsed.messages || []).includes('EXPENSIVE')
+    ? { input_tokens: 1000, output_tokens: 300000, cache_read_input_tokens: 5000, server_tool_use: { web_search_requests: 2 } }
+    : { input_tokens: 1, output_tokens: 1 };
+  res.end(JSON.stringify({ id: 'msg_mock', type: 'message', role: 'assistant', model: parsed.model, content, stop_reason, stop_details: null, usage }));
 }
 
 export function startMockAnthropic(port = 9911) {

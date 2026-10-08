@@ -145,7 +145,8 @@ try {
   const creq = mock.requests.at(-1);
   assert.ok(creq.body.tools.some((t) => t.type === 'web_search_20260209'), 'web search enabled');
   assert.match(creq.body.system[0].text, /weekend assistant/);
-  assert.equal(creq.body.output_config.effort, 'medium');
+  assert.equal(creq.body.output_config.effort, 'low', 'chat runs at low effort to save cost');
+  assert.equal(creq.body.tools.find((t) => t.name === 'web_search').max_uses, 2);
   // Tool-result steps don't use up the daily message allowance.
   const before = cj.remaining;
   cr = await chatPost({ fam: 'family-chat1', messages: [
@@ -290,6 +291,21 @@ try {
   const lim = await findCal({ name: 'Nowhere Academy Three', lat: 47.5, lon: -122 });
   assert.equal(lim.status, 429);
   assert.match((await lim.json()).error, /automatic school lookups/);
+
+  // --- Monthly AI budget ($4.50 default): one very expensive reply uses it up, then AI pauses. ---
+  assert.equal((await (await fetch(BASE + '/api/health')).json()).aiPaused, false);
+  cr = await chatPost({ fam: 'family-budget1', messages: [{ role: 'user', content: [{ type: 'text', text: 'EXPENSIVE hello' }] }] });
+  assert.equal(cr.status, 200, 'the reply that crosses the budget still arrives');
+  const n0 = mock.requests.length;
+  cr = await chatPost({ fam: 'family-budget2', messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }] });
+  assert.equal(cr.status, 503);
+  assert.match((await cr.json()).error, /AI is paused for the rest of this month/);
+  assert.equal(mock.requests.length, n0, 'no Claude call once the budget is used');
+  r = await post('/api/ai', { ...aiBody, fam: 'family-budget3' });
+  assert.equal(r.status, 503, 'weekend AI plans pause too');
+  assert.equal((await (await fetch(BASE + '/api/health')).json()).aiPaused, true);
+  // Non-AI features keep working.
+  assert.equal((await fetch(`${BASE}/api/trends?cell=${cell}&bands=4-5`)).status, 200);
 
   console.log('API TESTS PASSED');
 } catch (e) {

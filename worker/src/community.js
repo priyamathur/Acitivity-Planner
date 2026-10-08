@@ -18,8 +18,21 @@ export class Community extends DurableObject {
       day TEXT NOT NULL, key TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, key))`);
     // Where each school's public calendar lives (a feed link, or official dates found by search).
     // Public school information only: no family, child or device is stored with it.
+    // Estimated AI spend per month, in micro-dollars, for the monthly budget cap.
+    this.sql.exec('CREATE TABLE IF NOT EXISTS ai_spend (month TEXT PRIMARY KEY, micro INTEGER NOT NULL)');
     this.sql.exec(`CREATE TABLE IF NOT EXISTS school_cache (
       key TEXT PRIMARY KEY, data TEXT NOT NULL, updated INTEGER NOT NULL)`);
+  }
+
+  spendGet(month) {
+    const row = this.sql.exec('SELECT micro FROM ai_spend WHERE month = ?', month).toArray()[0];
+    return (row?.micro || 0) / 1e6;
+  }
+
+  spendAdd(month, usd) {
+    const micro = Math.max(0, Math.round(usd * 1e6));
+    this.sql.exec('INSERT INTO ai_spend (month, micro) VALUES (?, ?) ON CONFLICT (month) DO UPDATE SET micro = micro + excluded.micro', month, micro);
+    return this.spendGet(month);
   }
 
   schoolGet(key, maxAgeMs) {

@@ -6,6 +6,7 @@ import { suggest, AIError } from './ai.js';
 import { chatStep, validMessages, isNewUserTurn } from './chat.js';
 import { handleMcp } from './mcp.js';
 import { fetchICS, datesFromPhoto, discoverFeed, searchSchoolCalendar, feedUrlOk } from './school.js';
+import { costUsd, monthKey, budgetUsd } from './budget.js';
 import { findSchools, safeWebsite } from '../../js/near.js';
 import { parseICS, cleanEvents, schoolKey } from '../../js/school.js';
 
@@ -38,6 +39,17 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const community = env.COMMUNITY.get(env.COMMUNITY.idFromName('global'));
+    // Monthly AI budget: every Claude call is checked before and charged after (see budget.js).
+    const budget = budgetUsd(env);
+    env = { ...env, meter: {
+      async check() {
+        if ((await community.spendGet(monthKey())) >= budget) throw new AIError("AI is paused for the rest of this month: this month's AI budget is used up. Everything else still works, and AI is back on the 1st.", 503);
+      },
+      async add(model, usage) {
+        const total = await community.spendAdd(monthKey(), costUsd(model, usage));
+        console.log(`AI spend this month: $${total.toFixed(4)} of $${budget}`);
+      },
+    } };
 
     // Public MCP server for AI assistants (Claude, ChatGPT, Gemini…).
     if (url.pathname === '/mcp') {
@@ -51,7 +63,8 @@ export default {
 
     try {
       if (url.pathname === '/api/health') {
-        return json({ ok: true, ai: Boolean(env.ANTHROPIC_API_KEY), chat: Boolean(env.ANTHROPIC_API_KEY), community: true, schoolFeeds: true, schoolPhoto: Boolean(env.ANTHROPIC_API_KEY), schoolFinder: true, schoolSearch: Boolean(env.ANTHROPIC_API_KEY), aiDailyLimit: Number(env.AI_DAILY_LIMIT || 5), chatDailyLimit: Number(env.CHAT_DAILY_LIMIT || 20), minFamilies: Number(env.MIN_FAMILIES || 3) });
+        const aiPaused = (await community.spendGet(monthKey())) >= budget;
+        return json({ ok: true, aiPaused, ai: Boolean(env.ANTHROPIC_API_KEY), chat: Boolean(env.ANTHROPIC_API_KEY), community: true, schoolFeeds: true, schoolPhoto: Boolean(env.ANTHROPIC_API_KEY), schoolFinder: true, schoolSearch: Boolean(env.ANTHROPIC_API_KEY), aiDailyLimit: Number(env.AI_DAILY_LIMIT || 5), chatDailyLimit: Number(env.CHAT_DAILY_LIMIT || 20), minFamilies: Number(env.MIN_FAMILIES || 3) });
       }
 
       // Anonymous "we did this" signal for Popular near you.

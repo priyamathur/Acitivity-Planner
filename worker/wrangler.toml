@@ -19,10 +19,14 @@ new_sqlite_classes = ["Community"]
 [vars]
 # Model used for AI suggestions. Change to e.g. "claude-sonnet-5-5" or "claude-haiku-4-5" to cut cost.
 AI_MODEL = "claude-opus-5-5"
-# Free AI suggestions per family per day.
-AI_DAILY_LIMIT = "5"
+# Free AI suggestions per family per day (also school lookups and newsletter photos).
+AI_DAILY_LIMIT = "3"
 # Chat messages per family per day (tool steps inside a reply are not counted).
-CHAT_DAILY_LIMIT = "20"
+CHAT_DAILY_LIMIT = "10"
+# Hard cap on estimated Claude spend per calendar month (UTC), in US dollars.
+# AI pauses when it's reached; the rest of the app keeps working. Keep it below
+# what's loaded in the Anthropic account (here: $5 loaded, $4.50 cap).
+MONTHLY_AI_BUDGET_USD = "4.5"
 # A neighbourhood activity is only shown once at least this many distinct families shared it.
 MIN_FAMILIES = "3"
 # Secret (not here): ANTHROPIC_API_KEY — set with `wrangler secret put ANTHROPIC_API_KEY`.

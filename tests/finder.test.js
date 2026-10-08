@@ -107,3 +107,23 @@ test('taste: saves and memories lift similar ideas, swaps lower them', () => {
   assert.ok(new Set(one.map((a) => a.cat)).size >= 4, 'the feed keeps variety even with a strong taste');
   assert.ok(traitsOf(byId.volcano).includes(`cat:${byId.volcano.cat}`));
 });
+
+test('monthly AI budget: costs are priced from reported usage', async () => {
+  const { costUsd, budgetUsd, monthKey } = await import('../worker/src/budget.js');
+  // 1M output tokens on Opus 5.5 = $20; 1M input = $4; cache reads $0.20/M; writes 1.25x input; searches $0.01.
+  assert.equal(costUsd('claude-opus-5-5', { output_tokens: 1e6 }), 20);
+  assert.equal(costUsd('claude-opus-5-5', { input_tokens: 1e6 }), 4);
+  assert.equal(costUsd('claude-opus-5-5', { cache_read_input_tokens: 1e6 }), 0.2);
+  assert.equal(costUsd('claude-opus-5-5', { cache_creation_input_tokens: 1e6 }), 5);
+  assert.equal(costUsd('claude-opus-5-5', { server_tool_use: { web_search_requests: 3 } }), 0.03);
+  assert.equal(costUsd('claude-sonnet-5-5', { output_tokens: 1e6 }), 10);
+  assert.ok(costUsd('some-new-model', { output_tokens: 1e6 }) >= 20, 'unknown models are priced high, not free');
+  assert.equal(costUsd('claude-opus-5-5', undefined), 0);
+  // A typical chat step (cached prompt, short answer) costs about a cent.
+  const step = costUsd('claude-opus-5-5', { input_tokens: 800, cache_read_input_tokens: 6000, output_tokens: 400 });
+  assert.ok(step > 0.005 && step < 0.02, String(step));
+  assert.equal(budgetUsd({}), 4.5);
+  assert.equal(budgetUsd({ MONTHLY_AI_BUDGET_USD: '2' }), 2);
+  assert.equal(budgetUsd({ MONTHLY_AI_BUDGET_USD: 'x' }), 4.5);
+  assert.match(monthKey(Date.UTC(2026, 9, 31, 23)), /^2026-10$/);
+});
