@@ -22,6 +22,24 @@ export class Community extends DurableObject {
     this.sql.exec('CREATE TABLE IF NOT EXISTS ai_spend (month TEXT PRIMARY KEY, micro INTEGER NOT NULL)');
     this.sql.exec(`CREATE TABLE IF NOT EXISTS school_cache (
       key TEXT PRIMARY KEY, data TEXT NOT NULL, updated INTEGER NOT NULL)`);
+    // LittleRoam Plus waitlist: an email a parent typed in to hear when Plus launches.
+    // Never shown publicly; only the owner can read it (GET /api/waitlist with ADMIN_TOKEN).
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS waitlist (
+      email TEXT PRIMARY KEY, kids INTEGER NOT NULL, created INTEGER NOT NULL)`);
+  }
+
+  waitlistAdd(email, kids) {
+    const before = this.waitlistCount();
+    this.sql.exec('INSERT INTO waitlist (email, kids, created) VALUES (?, ?, ?) ON CONFLICT (email) DO NOTHING', email, kids, Date.now());
+    return { added: this.waitlistCount() > before };
+  }
+
+  waitlistCount() {
+    return this.sql.exec('SELECT COUNT(*) AS n FROM waitlist').toArray()[0].n;
+  }
+
+  waitlistAll() {
+    return this.sql.exec('SELECT email, kids, created FROM waitlist ORDER BY created').toArray();
   }
 
   spendGet(month) {

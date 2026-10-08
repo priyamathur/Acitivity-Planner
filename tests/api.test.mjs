@@ -11,7 +11,7 @@ const PORT = 8787;
 const BASE = `http://127.0.0.1:${PORT}`;
 const mock = await startMockAnthropic(9911);
 const sites = await startSchoolSites(9922);
-writeFileSync('worker/.dev.vars', 'ANTHROPIC_API_KEY=test-key\nANTHROPIC_BASE_URL=http://127.0.0.1:9911\n');
+writeFileSync('worker/.dev.vars', 'ANTHROPIC_API_KEY=test-key\nANTHROPIC_BASE_URL=http://127.0.0.1:9911\nADMIN_TOKEN=test-admin-token\n');
 
 const dev = spawn('npx', ['wrangler', 'dev', '--port', String(PORT), '--ip', '127.0.0.1', '--var', 'MIN_FAMILIES:3', '--var', 'AI_DAILY_LIMIT:3', '--var', 'SCHOOL_FETCH_TEST_ORIGIN:http://127.0.0.1:9922', '--var', 'OVERPASS_URL:http://127.0.0.1:9922/overpass', '--persist-to', '/tmp/littleroam-test-state-' + Date.now()], {
   cwd: 'worker', env: { ...process.env, WRANGLER_SEND_METRICS: 'false' }, stdio: ['ignore', 'pipe', 'pipe'], detached: true,
@@ -293,6 +293,27 @@ try {
   const lim = await findCal({ name: 'Nowhere Academy Three', lat: 47.5, lon: -122 });
   assert.equal(lim.status, 429);
   assert.match((await lim.json()).error, /automatic school lookups/);
+
+  // --- Plus waitlist: emails go in, only the owner (ADMIN_TOKEN) can read them. ---
+  assert.equal(health.waitlist, true);
+  assert.equal((await post('/api/waitlist', { fam: 'family-wait1', email: 'not-an-email' })).status, 400);
+  assert.equal((await post('/api/waitlist', { fam: 'bad', email: 'a@b.co' })).status, 400, 'family id required');
+  let wr = await post('/api/waitlist', { fam: 'family-wait1', email: ' Parent@Example.com ', kids: 2 });
+  assert.equal(wr.status, 200, await wr.clone().text());
+  assert.equal((await wr.json()).added, true);
+  wr = await post('/api/waitlist', { fam: 'family-wait2', email: 'parent@example.com', kids: 99 });
+  assert.equal((await wr.json()).added, false, 'same email (any case) is only stored once');
+  await post('/api/waitlist', { fam: 'family-wait2', email: '=cmd@evil.co', kids: 1 });
+  assert.equal((await fetch(BASE + '/api/waitlist')).status, 404, 'no token, no list');
+  assert.equal((await fetch(BASE + '/api/waitlist', { headers: { authorization: 'Bearer wrong-token-value' } })).status, 404);
+  const wl = await (await fetch(BASE + '/api/waitlist', { headers: { authorization: 'Bearer test-admin-token' } })).json();
+  assert.deepEqual(wl.people.map((p) => [p.email, p.kids]), [['parent@example.com', 2], ['=cmd@evil.co', 1]]);
+  const csv = await (await fetch(BASE + '/api/waitlist?format=csv', { headers: { authorization: 'Bearer test-admin-token' } })).text();
+  assert.match(csv, /^email,kids,joined\nparent@example\.com,2,/);
+  assert.match(csv, /\n'=cmd@evil\.co,1,/, 'formula-like values are escaped for spreadsheets');
+  for (let i = 0; i < 4; i++) await post('/api/waitlist', { fam: 'family-wait3', email: `p${i}@example.com` });
+  assert.equal((await post('/api/waitlist', { fam: 'family-wait3', email: 'p9@example.com' })).status, 200, '5th sign-up from one device is allowed');
+  assert.equal((await post('/api/waitlist', { fam: 'family-wait3', email: 'p10@example.com' })).status, 429, 'then rate-limited');
 
   // --- Monthly AI budget ($4.50 default): one very expensive reply uses it up, then AI pauses. ---
   assert.equal((await (await fetch(BASE + '/api/health')).json()).aiPaused, false);

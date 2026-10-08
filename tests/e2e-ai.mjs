@@ -183,6 +183,19 @@ try {
   if (!(await page.inputValue('#mcp-url')).endsWith('/mcp')) fail('MCP address should end in /mcp');
   await page.keyboard.press('Escape');
 
+  // Plus waitlist: with the server, parents leave their email (no payment).
+  await page.locator('#plus-btn').click();
+  await page.getByRole('button', { name: 'Join the waitlist' }).click();
+  await page.getByText('Please check your email address.').waitFor();
+  await page.fill('#wl-form [name=email]', 'e2e-parent@example.com');
+  await page.getByRole('button', { name: 'Join the waitlist' }).click();
+  await page.locator('#sheet-body').getByText("✓ You're on the list. We'll email you when Plus launches.").waitFor();
+  if (!(await page.evaluate(() => window.__littleroam.store.get().plusWaitlist))) fail('waitlist join not remembered');
+  await page.keyboard.press('Escape');
+  await page.locator('#plus-btn').click();
+  if (await page.locator('#wl-form').count()) fail('form shown again after joining');
+  await page.keyboard.press('Escape');
+
   if (errors.length) fail('page errors:\n' + errors.join('\n'));
   console.log('AI E2E PASSED');
 } catch (e) {

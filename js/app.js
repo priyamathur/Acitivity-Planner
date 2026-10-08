@@ -7,7 +7,8 @@ import { cellFor, bandsForAges, bandLabel } from './community.js';
 import { parseICS, normaliseFeedUrl, schoolEventsBetween, nextDayOff, addDays, forGrade, GRADES, gradeLabel } from './school.js';
 import { learnTaste, because, topCategories } from './taste.js';
 
-// Optional: set to a Tally/Google Form/Stripe link to collect Plus early-access sign-ups.
+// Optional: a Tally/Google Form link for Plus sign-ups when the app runs without the
+// server (the GitHub Pages version). With the server, sign-ups go to /api/waitlist.
 const WAITLIST_URL = '';
 
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -1605,14 +1606,43 @@ function plus() {
       <div class="card pad price"><h3>Free</h3><p class="amt">$0</p><ul class="list"><li>Weekend planner around your kids' classes</li><li>Near-me places</li><li>Full idea library</li><li>Memories on this device</li><li>A few AI plans a day</li></ul></div>
       <div class="card pad price hl"><h3>Plus</h3><p class="amt">$4.99<span>/mo</span></p><p class="meta">or $34.99/year · 14-day free trial</p><ul class="list"><li>Unlimited AI weekend plans</li><li>Shared family plan with partner & grandparents</li><li>Sync classes with Google/Apple Calendar</li><li>Local weekend events</li><li>Cloud backup, photo sync & memory book</li></ul></div>
     </div>
-    <p class="meta">Prices are planned, not yet charged. No payment is taken in this version.</p>
-    <button class="btn primary" id="interest">${S().plusInterest ? '✓ You\'re on the list' : 'I\'m interested'}</button></div>`,
+    <p class="meta">Prices are planned and may change. No payment is taken: this is a waitlist.</p>
+    ${S().plusWaitlist || (S().plusInterest && !api.waitlistEnabled())
+      ? '<p class="ok-line" id="wl-done">✓ You\'re on the list. We\'ll email you when Plus launches.</p>'
+      : api.waitlistEnabled()
+        ? `<form id="wl-form" class="wl-form" novalidate>
+            <label>Your email<input class="input" type="email" name="email" autocomplete="email" inputmode="email" required placeholder="you@example.com" /></label>
+            <p class="meta">Only used to tell you when Plus launches. Never shared.</p>
+            <button class="btn primary" type="submit">Join the waitlist</button>
+            <p class="wl-err" id="wl-err" role="alert" hidden></p>
+          </form>`
+        : '<button class="btn primary" id="interest">I\'m interested</button>'}</div>`,
   (el) => {
-    $('#interest', el).onclick = () => {
+    const form = $('#wl-form', el);
+    if (form) form.onsubmit = async (e) => {
+      e.preventDefault();
+      const email = form.email.value.trim();
+      const err = $('#wl-err', el);
+      const btn = $('button[type=submit]', form);
+      if (!/^\S+@\S+\.\S{2,}$/.test(email)) { err.textContent = 'Please check your email address.'; err.hidden = false; return; }
+      btn.disabled = true;
+      try {
+        await api.joinWaitlist({ fam: famId(), email, kids: S().family.kids.length });
+        store.set((s) => { s.plusInterest = true; s.plusWaitlist = true; });
+        form.outerHTML = '<p class="ok-line">✓ You\'re on the list. We\'ll email you when Plus launches.</p>';
+        toast('Thanks! You\'re on the Plus waitlist.');
+      } catch (ex) {
+        err.textContent = ex.message || 'Couldn\'t join right now. Please try again.';
+        err.hidden = false;
+        btn.disabled = false;
+      }
+    };
+    const interest = $('#interest', el);
+    if (interest) interest.onclick = () => {
       store.set((s) => (s.plusInterest = true));
       if (WAITLIST_URL) window.open(WAITLIST_URL, '_blank', 'noopener');
       else toast('Thanks! We\'ll let you know in the app when Plus launches.');
-      $('#interest', el).textContent = '✓ You\'re on the list';
+      interest.outerHTML = '<p class="ok-line">✓ You\'re on the list</p>';
     };
   });
 }

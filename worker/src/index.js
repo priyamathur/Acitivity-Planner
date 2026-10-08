@@ -32,6 +32,18 @@ async function readJSON(request, max = 16000) {
   return JSON.parse(text);
 }
 
+// A plain, sane email address (not a full RFC check: the point is catching typos).
+const emailOk = (e) => typeof e === 'string' && e.length <= 254 && /^[^\s@<>()",;:]+@[^\s@<>()",;:]+\.[a-z]{2,}$/i.test(e);
+
+// Constant-time comparison for the owner's admin token.
+function sameSecret(a, b) {
+  const x = new TextEncoder().encode(String(a));
+  const y = new TextEncoder().encode(String(b));
+  let diff = x.length ^ y.length;
+  for (let i = 0; i < Math.max(x.length, y.length); i++) diff |= (x[i] || 0) ^ (y[i] || 0);
+  return diff === 0;
+}
+
 const famOk = (f) => typeof f === 'string' && /^[a-z0-9-]{8,64}$/i.test(f);
 const oneOf = (v, opts, d) => (opts.includes(v) ? v : d);
 
@@ -64,7 +76,7 @@ export default {
     try {
       if (url.pathname === '/api/health') {
         const aiPaused = (await community.spendGet(monthKey())) >= budget;
-        return json({ ok: true, aiPaused, ai: Boolean(env.ANTHROPIC_API_KEY), chat: Boolean(env.ANTHROPIC_API_KEY), community: true, schoolFeeds: true, schoolPhoto: Boolean(env.ANTHROPIC_API_KEY), schoolFinder: true, schoolSearch: Boolean(env.ANTHROPIC_API_KEY), aiDailyLimit: Number(env.AI_DAILY_LIMIT || 5), chatDailyLimit: Number(env.CHAT_DAILY_LIMIT || 20), minFamilies: Number(env.MIN_FAMILIES || 3) });
+        return json({ ok: true, aiPaused, ai: Boolean(env.ANTHROPIC_API_KEY), chat: Boolean(env.ANTHROPIC_API_KEY), community: true, schoolFeeds: true, schoolPhoto: Boolean(env.ANTHROPIC_API_KEY), schoolFinder: true, schoolSearch: Boolean(env.ANTHROPIC_API_KEY), waitlist: true, aiDailyLimit: Number(env.AI_DAILY_LIMIT || 5), chatDailyLimit: Number(env.CHAT_DAILY_LIMIT || 20), minFamilies: Number(env.MIN_FAMILIES || 3) });
       }
 
       // Anonymous "we did this" signal for Popular near you.
@@ -286,6 +298,33 @@ export default {
           if (err instanceof AIError) return bad(err.message, err.status);
           throw err;
         }
+      }
+
+      // LittleRoam Plus waitlist (no payment is taken; this only collects interest).
+      if (url.pathname === '/api/waitlist' && request.method === 'POST') {
+        const b = await readJSON(request, 2000);
+        const email = String(b.email || '').trim().toLowerCase();
+        if (!famOk(b.fam)) return bad('invalid request');
+        if (!emailOk(email)) return bad('Please check your email address.');
+        const ip = await sha256(request.headers.get('cf-connecting-ip') || 'local');
+        const usage = await community.consume([{ key: `w:${await sha256(b.fam)}`, limit: 5 }, { key: `wi:${ip}`, limit: 30 }]);
+        if (!usage.ok) return bad('Too many sign-ups from here today. Please try again tomorrow.', 429);
+        const kids = Math.min(12, Math.max(0, Math.round(Number(b.kids) || 0)));
+        const { added } = await community.waitlistAdd(email, kids);
+        return json({ ok: true, added });
+      }
+
+      // The owner reads the waitlist with the ADMIN_TOKEN secret. Off when no token is set.
+      if (url.pathname === '/api/waitlist' && request.method === 'GET') {
+        const auth = request.headers.get('authorization') || '';
+        if (!env.ADMIN_TOKEN || !sameSecret(auth, `Bearer ${env.ADMIN_TOKEN}`)) return bad('not found', 404);
+        const rows = await community.waitlistAll();
+        if (url.searchParams.get('format') === 'csv') {
+          // A leading = + - @ is escaped so a spreadsheet never runs it as a formula.
+          const csv = ['email,kids,joined', ...rows.map((r) => `${/^[=+\-@]/.test(r.email) ? `'${r.email}` : r.email},${r.kids},${new Date(r.created).toISOString()}`)].join('\n');
+          return new Response(csv, { headers: { 'content-type': 'text/csv; charset=utf-8', 'cache-control': 'no-store' } });
+        }
+        return json({ count: rows.length, people: rows.map((r) => ({ email: r.email, kids: r.kids, joined: new Date(r.created).toISOString() })) });
       }
 
       if (url.pathname.startsWith('/api/')) return bad('not found', 404);

@@ -467,6 +467,8 @@ try {
   await page.evaluate(() => (location.hash = 'profile'));
   await page.locator('#plus-btn').click();
   await page.getByText('$4.99').waitFor();
+  await page.getByRole('button', { name: "I'm interested" }).click(); // static hosting: no server waitlist
+  await page.getByText("✓ You're on the list").waitFor();
   await page.screenshot({ path: `${SHOTS}/08-plus.png` });
 
   // Desktop + dark mode render check
