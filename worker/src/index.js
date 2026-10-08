@@ -136,7 +136,8 @@ export default {
           favIds: (Array.isArray(b.favIds) ? b.favIds : []).filter((id) => IDS.has(id)).slice(0, 12),
           trends,
           places,
-          maxCustom: note ? 2 : 1,
+          // AI-invented activities are long (materials, steps), so they're only written when the parent asked for something specific.
+          maxCustom: note ? 1 : 0,
         };
         try {
           const result = await suggest(env, ctx);

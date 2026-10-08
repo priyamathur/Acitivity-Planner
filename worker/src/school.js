@@ -149,9 +149,9 @@ export async function searchSchoolCalendar(env, { name, town, district, website,
         max_tokens: 16000,
         betas: ['server-side-fallback-2026-07-01'],
         fallbacks: 'default',
-        output_config: { effort: 'medium' },
+        output_config: { effort: 'low' }, // cost: answers are cached per school, so one careful-enough look is enough
         system: [{ type: 'text', text: SEARCH_SYSTEM, cache_control: { type: 'ephemeral' } }],
-        tools: [REPORT_TOOL, { type: 'web_search_20260209', name: 'web_search', max_uses: 4 }],
+        tools: [REPORT_TOOL, { type: 'web_search_20260209', name: 'web_search', max_uses: 3 }],
         messages,
       }, env.meter);
     } catch (err) {
