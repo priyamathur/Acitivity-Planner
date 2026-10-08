@@ -87,11 +87,9 @@ try {
   let r = await post('/api/ai', aiBody);
   assert.equal(r.status, 200, await r.clone().text());
   let ai = await r.json();
-  assert.deepEqual(ai.picks.map((p) => [p.windowId, p.activityId.startsWith('ai-') ? 'custom' : p.activityId]), [['sat@10:15', 'scavenger'], ['sat@13:30', 'custom']], 'bad window + hallucinated id dropped');
+  assert.deepEqual(ai.picks.map((p) => [p.windowId, p.activityId.startsWith('ai-') ? 'custom' : p.activityId]), [['sat@10:15', 'scavenger']], 'bad window, hallucinated id and (without a note) custom ideas dropped');
   assert.equal(ai.picks[0].placeName, 'Pioneer Square Playground');
   assert.equal(ai.picks[0].why, 'Popular with 3 families near you and perfect for the park.', 'kept: scavenger really is trending (3 families)');
-  assert.equal(ai.picks[1].custom.cat, 'sensory');
-  assert.equal(ai.picks[1].custom.ages[0], 3);
   assert.equal(ai.remaining, 2);
 
   // What we actually sent to Claude.
@@ -117,6 +115,11 @@ try {
   ai = await r.json();
   assert.equal(r.status, 200);
   assert.match(mock.requests.at(-1).body.messages[0].content, /PARENT'S NOTE: Grandma visits/);
+  // With a note, one custom idea is allowed.
+  const custom = ai.picks.find((p) => p.activityId.startsWith('ai-'));
+  assert.equal(custom.windowId, 'sat@13:30');
+  assert.equal(custom.custom.cat, 'sensory');
+  assert.equal(custom.custom.ages[0], 3);
 
   // No free time → 400 without using up quota.
   r = await post('/api/ai', { ...aiBody, days: [{ key: 'sat', label: 'x', weather: '', booked: [], windows: [] }] });
@@ -146,7 +149,7 @@ try {
   assert.ok(creq.body.tools.some((t) => t.type === 'web_search_20260209'), 'web search enabled');
   assert.match(creq.body.system[0].text, /weekend assistant/);
   assert.equal(creq.body.output_config.effort, 'low', 'chat runs at low effort to save cost');
-  assert.equal(creq.body.tools.find((t) => t.name === 'web_search').max_uses, 2);
+  assert.equal(creq.body.tools.find((t) => t.name === 'web_search').max_uses, 1);
   // Tool-result steps don't use up the daily message allowance.
   const before = cj.remaining;
   cr = await chatPost({ fam: 'family-chat1', messages: [

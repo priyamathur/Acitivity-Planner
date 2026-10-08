@@ -608,7 +608,8 @@ function schoolSheet(i, { method = null } = {}) {
       if (!f || !need()) return;
       status('Reading the dates… this can take a few seconds.');
       try {
-        const blob = await store.compressImage(f, 1600, 0.85);
+        // 1280 px keeps newsletter text readable at about a third fewer image tokens than 1600 px.
+        const blob = await store.compressImage(f, 1280, 0.85);
         const image = await new Promise((r, j) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.onerror = () => j(new Error('Could not read the photo.')); fr.readAsDataURL(blob); });
         const res = await api.readSchoolPhoto({ fam: famId(), image, today: store.isoDate(), school: name() });
         reviewDates(i, { name: name(), grade: gradeNow(), source: 'photo' }, res);
@@ -1257,7 +1258,8 @@ function pushLog(entry) {
 
 async function sendChat(text) {
   if (chat.busy) return;
-  if (chat.messages.length > 60) return pushLog({ who: 'bot', text: 'This chat is getting long. Tap "New chat" to start fresh (your plan is saved).', error: true });
+  // Each message resends the whole chat, so long chats get pricier per message: start fresh sooner.
+  if (chat.messages.length > 30) return pushLog({ who: 'bot', text: 'This chat is getting long. Tap "New chat" to start fresh (your plan is saved).', error: true });
   chat.busy = true;
   const mark = chat.messages.length;
   chat.messages.push({ role: 'user', content: [{ type: 'text', text }, { type: 'text', text: appStateText() }] });

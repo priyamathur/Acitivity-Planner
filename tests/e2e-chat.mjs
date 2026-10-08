@@ -153,7 +153,9 @@ try {
   await page.locator('.chat-log .bubble.me', { hasText: 'What can we do this afternoon?' }).waitFor();
   await page.waitForFunction(() => !document.querySelector('#chat-input')?.disabled);
 
-  // 9. Daily limit (8): message 8 works, message 9 is refused politely, and the chat recovers
+  // 9. Daily limit (8): message 8 works, message 9 is refused politely, and the chat recovers.
+  // Start a fresh thread first: long threads are capped (30 entries) to keep each request cheap.
+  await page.getByRole('button', { name: 'New chat' }).click();
   await send('hello');
   await send('hello again');
   await page.getByText(/sent today's 8 chat messages/).waitFor();
