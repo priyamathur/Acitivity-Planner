@@ -151,9 +151,9 @@ export async function searchSchoolCalendar(env, { name, town, district, website,
         fallbacks: 'default',
         output_config: { effort: 'medium' },
         system: [{ type: 'text', text: SEARCH_SYSTEM, cache_control: { type: 'ephemeral' } }],
-        tools: [REPORT_TOOL, { type: 'web_search_20260209', name: 'web_search', max_uses: 6 }],
+        tools: [REPORT_TOOL, { type: 'web_search_20260209', name: 'web_search', max_uses: 4 }],
         messages,
-      });
+      }, env.meter);
     } catch (err) {
       throw aiError(err);
     }
@@ -222,7 +222,7 @@ export async function datesFromPhoto(env, { image, mediaType, today, school }) {
           { type: 'text', text: `TODAY: ${today}\nSCHOOL: ${school || 'not given'}\nList the dated items in this picture.` },
         ],
       }],
-    });
+    }, env.meter);
   } catch (err) {
     throw aiError(err);
   }

@@ -65,7 +65,7 @@ export const TOOLS = [
   }),
 ];
 
-const WEB_SEARCH = { type: 'web_search_20260209', name: 'web_search', max_uses: 3 };
+const WEB_SEARCH = { type: 'web_search_20260209', name: 'web_search', max_uses: 2 };
 
 // Frozen system prompt: identical bytes on every request, so it can be cached.
 export const SYSTEM_CHAT = `You are LittleRoam's family weekend assistant, inside the LittleRoam app. Parents chat with you to plan weekends around their kids' classes, add events they're excited about, and change their plans. You change the app directly with tools. Talk like a helpful friend: warm, brief, practical.
@@ -99,12 +99,12 @@ export async function chatStep(env, messages) {
       max_tokens: 16000,
       betas: ['server-side-fallback-2026-07-01'],
       fallbacks: 'default',
-      output_config: { effort: 'medium' },
+      output_config: { effort: 'low' },
       cache_control: { type: 'ephemeral' },
       system: [{ type: 'text', text: SYSTEM_CHAT }],
       tools: [...TOOLS, WEB_SEARCH],
       messages,
-    });
+    }, env.meter);
     return { content: response.content, stop_reason: response.stop_reason };
   } catch (err) {
     throw aiError(err, { badRequest: "The AI couldn't continue this chat. Please start a new chat" });

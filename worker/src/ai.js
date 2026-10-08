@@ -174,18 +174,21 @@ export const apiReason = (err) => String(err?.error?.error?.message || err?.mess
 
 // Every Claude call goes through here. The server-side fallback option isn't enabled on
 // every account; if the API rejects it, the same request is retried once without it.
-export async function createMessage(client, params) {
+// `meter` (from index.js) enforces the monthly budget: checked before, charged after.
+export async function createMessage(client, params, meter) {
+  if (meter) await meter.check();
+  let res;
   try {
-    return await client.beta.messages.create(params);
+    res = await client.beta.messages.create(params);
   } catch (err) {
-    if (err instanceof Anthropic.BadRequestError && params.fallbacks && /fallback|beta/i.test(apiReason(err))) {
-      console.warn('Claude rejected the fallback option; retrying without it:', apiReason(err));
-      const { fallbacks, betas = [], ...rest } = params;
-      const keep = betas.filter((b) => !b.startsWith('server-side-fallback'));
-      return client.beta.messages.create({ ...rest, ...(keep.length ? { betas: keep } : {}) });
-    }
-    throw err;
+    if (!(err instanceof Anthropic.BadRequestError && params.fallbacks && /fallback|beta/i.test(apiReason(err)))) throw err;
+    console.warn('Claude rejected the fallback option; retrying without it:', apiReason(err));
+    const { fallbacks, betas = [], ...rest } = params;
+    const keep = betas.filter((b) => !b.startsWith('server-side-fallback'));
+    res = await client.beta.messages.create({ ...rest, ...(keep.length ? { betas: keep } : {}) });
   }
+  if (meter) await meter.add(res.model || params.model, res.usage);
+  return res;
 }
 
 // Turn an SDK error into a message a parent (or the person running the app) can act on.
@@ -215,7 +218,7 @@ export async function suggest(env, ctx) {
       output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
       system: [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }],
       messages: [{ role: 'user', content: buildUserPrompt(ctx) }],
-    });
+    }, env.meter);
   } catch (err) {
     throw aiError(err);
   }
