@@ -38,7 +38,7 @@ There are two ways to host it. Both deploy automatically on every push to `main`
 4. Re-run the latest workflow, or push to `main`. The app goes live at `https://littleroam.<your-subdomain>.workers.dev`.
 
 Settings live in `worker/wrangler.toml`:
-- `AI_MODEL` (default `claude-opus-5-5`)
+- `AI_MODEL` (default `claude-haiku-5-5`, the cheapest model)
 - `AI_DAILY_LIMIT` (free AI suggestions per family per day)
 - `MIN_FAMILIES` (the anonymity threshold)
 

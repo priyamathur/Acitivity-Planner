@@ -95,9 +95,9 @@ try {
   // What we actually sent to Claude.
   const sent = mock.requests.at(-1);
   assert.match(sent.url, /^\/v1\/messages/);
-  assert.equal(sent.body.model, 'claude-opus-5-5');
-  assert.equal(sent.body.fallbacks, 'default');
-  assert.match(sent.headers['anthropic-beta'], /server-side-fallback-2026-07-01/);
+  assert.equal(sent.body.model, 'claude-haiku-5-5', 'cheapest model by default');
+  assert.equal(sent.body.fallbacks, undefined, 'Haiku has no server-side fallback');
+  assert.doesNotMatch(sent.headers['anthropic-beta'] || '', /server-side-fallback/);
   assert.equal(sent.body.output_config.effort, 'low');
   assert.equal(sent.body.output_config.format.type, 'json_schema');
   assert.equal(sent.headers['x-api-key'], 'test-key');
@@ -146,7 +146,7 @@ try {
   assert.equal(cj.stop_reason, 'end_turn');
   assert.equal(cj.content[0].type, 'text');
   const creq = mock.requests.at(-1);
-  assert.ok(creq.body.tools.some((t) => t.type === 'web_search_20260209'), 'web search enabled');
+  assert.ok(creq.body.tools.some((t) => t.type === 'web_search_20250305'), 'web search enabled');
   assert.match(creq.body.system[0].text, /weekend assistant/);
   assert.equal(creq.body.output_config.effort, 'low', 'chat runs at low effort to save cost');
   assert.equal(creq.body.tools.find((t) => t.name === 'web_search').max_uses, 1);
@@ -160,15 +160,14 @@ try {
   assert.equal(cr.status, 200);
   cr = await chatPost({ fam: 'family-chat1', messages: [{ role: 'user', content: [{ type: 'text', text: 'again' }] }] });
   assert.equal((await cr.json()).remaining, before - 1, 'only new user messages are counted');
-  // An account without the server-side fallback option: retried once without it, and it works.
+  // A model that rejects this web search version: retried once with the other version, and it works.
   const before2 = mock.requests.length;
-  cr = await chatPost({ fam: 'family-chat2', messages: [{ role: 'user', content: [{ type: 'text', text: 'NOFALLBACK hello' }] }] });
+  cr = await chatPost({ fam: 'family-chat2', messages: [{ role: 'user', content: [{ type: 'text', text: 'OLDSEARCH hello' }] }] });
   assert.equal(cr.status, 200, await cr.clone().text());
   const tries = mock.requests.slice(before2);
   assert.equal(tries.length, 2, 'one retry');
-  assert.equal(tries[0].body.fallbacks, 'default');
-  assert.equal(tries[1].body.fallbacks, undefined, 'retry drops the fallback option');
-  assert.doesNotMatch(tries[1].headers['anthropic-beta'] || '', /server-side-fallback/);
+  assert.ok(tries[0].body.tools.some((t) => t.type === 'web_search_20250305'));
+  assert.ok(tries[1].body.tools.some((t) => t.type === 'web_search_20260209'), 'retry switches the search version');
   // Any other rejected request shows Anthropic's reason (so problems can be fixed), and isn't retried.
   const before3 = mock.requests.length;
   cr = await chatPost({ fam: 'family-chat2', messages: [{ role: 'user', content: [{ type: 'text', text: 'BADREQ' }] }] });
@@ -212,7 +211,7 @@ try {
   assert.match(blocks[1].text, /TODAY: 2026-10-07/);
   assert.match(blocks[1].text, /SCHOOL: Synergy Learning Academy/);
   assert.equal(preq.output_config.format.type, 'json_schema');
-  assert.equal(preq.model, 'claude-opus-5-5');
+  assert.equal(preq.model, 'claude-haiku-5-5');
   // Photo reads share the daily AI limit (3 in this test).
   assert.equal((await post('/api/school-photo', { fam: 'family-photo1', image: PNG })).status, 200);
   assert.equal((await post('/api/school-photo', { fam: 'family-photo1', image: PNG })).status, 200);
@@ -258,7 +257,7 @@ try {
   const searchReqs = mock.requests.filter((r) => r.body.tools?.some((t) => t.name === 'report_school_calendar'));
   assert.equal(searchReqs.length, 2, 'pause_turn resumed once');
   const sreq = searchReqs[0].body;
-  assert.ok(sreq.tools.some((t) => t.type === 'web_search_20260209'), 'web search enabled');
+  assert.ok(sreq.tools.some((t) => t.type === 'web_search_20250305'), 'web search enabled');
   assert.equal(sreq.tools.find((t) => t.name === 'report_school_calendar').strict, true);
   assert.equal(sreq.tool_choice, undefined, 'no forced tool choice (not allowed on this model)');
   assert.match(sreq.messages[0].content, /SCHOOL: Synergy Learning Academy\nTOWN: Issaquah/);

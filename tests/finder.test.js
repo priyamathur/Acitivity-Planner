@@ -119,6 +119,10 @@ test('monthly AI budget: costs are priced from reported usage', async () => {
   assert.equal(costUsd('claude-sonnet-5-5', { output_tokens: 1e6 }), 10);
   assert.ok(costUsd('some-new-model', { output_tokens: 1e6 }) >= 20, 'unknown models are priced high, not free');
   assert.equal(costUsd('claude-opus-5-5', undefined), 0);
+  // Haiku 5.5: $0.10 / $0.50 per million for prompts up to 100K tokens, $0.50 / $2.50 above.
+  assert.equal(costUsd('claude-haiku-5-5', { output_tokens: 1e6 }), 0.5);
+  assert.equal(costUsd('claude-haiku-5-5', { input_tokens: 1e6 }), 0.5, 'a 1M-token prompt is on the long rate card');
+  assert.ok(Math.abs(costUsd('claude-haiku-5-5', { input_tokens: 50_000 }) - 0.005) < 1e-12);
   // A typical chat step (cached prompt, short answer) costs about a cent.
   const step = costUsd('claude-opus-5-5', { input_tokens: 800, cache_read_input_tokens: 6000, output_tokens: 400 });
   assert.ok(step > 0.005 && step < 0.02, String(step));
@@ -126,4 +130,15 @@ test('monthly AI budget: costs are priced from reported usage', async () => {
   assert.equal(budgetUsd({ MONTHLY_AI_BUDGET_USD: '2' }), 2);
   assert.equal(budgetUsd({ MONTHLY_AI_BUDGET_USD: 'x' }), 4.5);
   assert.match(monthKey(Date.UTC(2026, 9, 31, 23)), /^2026-10$/);
+});
+
+test('model choice: Haiku 5.5 by default, fallback and newer search only where supported', async () => {
+  const { modelParams, webSearch, DEFAULT_MODEL } = await import('../worker/src/ai.js');
+  assert.equal(DEFAULT_MODEL, 'claude-haiku-5-5');
+  assert.deepEqual(modelParams({}), { model: 'claude-haiku-5-5' });
+  assert.equal(webSearch({}, 2).type, 'web_search_20250305');
+  const sonnet = { AI_MODEL: 'claude-sonnet-5-5' };
+  assert.equal(modelParams(sonnet).fallbacks, 'default');
+  assert.equal(webSearch(sonnet, 2).type, 'web_search_20260209');
+  assert.equal(webSearch(sonnet, 2).max_uses, 2);
 });

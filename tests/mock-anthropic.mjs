@@ -64,7 +64,7 @@ function reply(res, parsed, { stop_reason, content }) {
   res.writeHead(200, { 'content-type': 'application/json' });
   // "EXPENSIVE" in the conversation reports a very costly reply, to test the monthly budget cap.
   const usage = JSON.stringify(parsed.messages || []).includes('EXPENSIVE')
-    ? { input_tokens: 1000, output_tokens: 300000, cache_read_input_tokens: 5000, server_tool_use: { web_search_requests: 2 } }
+    ? { input_tokens: 1000, output_tokens: 10_000_000, cache_read_input_tokens: 5000, server_tool_use: { web_search_requests: 2 } }
     : { input_tokens: 1, output_tokens: 1 };
   res.end(JSON.stringify({ id: 'msg_mock', type: 'message', role: 'assistant', model: parsed.model, content, stop_reason, stop_details: null, usage }));
 }
@@ -81,6 +81,7 @@ export function startMockAnthropic(port = 9911) {
       const all = JSON.stringify(parsed.messages || []);
       const bad = (message) => { res.writeHead(400, { 'content-type': 'application/json' }); res.end(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message } })); };
       if (all.includes('NOFALLBACK') && parsed.fallbacks) return bad('fallbacks: Extra inputs are not permitted');
+      if (all.includes('OLDSEARCH') && parsed.tools?.some((t) => t.type === 'web_search_20250305')) return bad('tools.5: web_search_20250305 is not supported on this model');
       if (all.includes('BADREQ')) return bad('messages.0.content.0: example of a rejected request');
       // School calendar search: one paused web search, then the report.
       if (Array.isArray(parsed.tools) && parsed.tools.some((t) => t.name === 'report_school_calendar')) {

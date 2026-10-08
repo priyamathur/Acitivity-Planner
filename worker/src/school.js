@@ -4,7 +4,7 @@
 // read them directly), and reading dates off a newsletter photo with Claude.
 import Anthropic from '@anthropic-ai/sdk';
 import { normaliseFeedUrl, cleanEvents, parseICS, extractCalendarLinks, gradeLabel } from '../../js/school.js';
-import { AIError, createMessage, aiError } from './ai.js';
+import { AIError, createMessage, aiError, modelParams, webSearch } from './ai.js';
 
 const MAX_ICS = 2_000_000;
 const MAX_PAGE = 1_500_000;
@@ -145,13 +145,11 @@ export async function searchSchoolCalendar(env, { name, town, district, website,
     let res;
     try {
       res = await createMessage(client, {
-        model: env.AI_MODEL || 'claude-opus-5-5',
+        ...modelParams(env),
         max_tokens: 16000,
-        betas: ['server-side-fallback-2026-07-01'],
-        fallbacks: 'default',
         output_config: { effort: 'low' }, // cost: answers are cached per school, so one careful-enough look is enough
         system: [{ type: 'text', text: SEARCH_SYSTEM, cache_control: { type: 'ephemeral' } }],
-        tools: [REPORT_TOOL, { type: 'web_search_20260209', name: 'web_search', max_uses: 3 }],
+        tools: [REPORT_TOOL, webSearch(env, 3)],
         messages,
       }, env.meter);
     } catch (err) {
@@ -209,10 +207,8 @@ export async function datesFromPhoto(env, { image, mediaType, today, school }) {
   let response;
   try {
     response = await createMessage(client, {
-      model: env.AI_MODEL || 'claude-opus-5-5',
+      ...modelParams(env),
       max_tokens: 8000,
-      betas: ['server-side-fallback-2026-07-01'],
-      fallbacks: 'default',
       output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
       system: [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }],
       messages: [{
