@@ -36,6 +36,8 @@ async function call(path, opts = {}) {
   return data;
 }
 
+export const waitlistEnabled = () => Boolean(health?.ok && health.waitlist);
+export const joinWaitlist = (body) => call('waitlist', { method: 'POST', body: JSON.stringify(body) });
 export const askAI = (body) => call('ai', { method: 'POST', body: JSON.stringify(body) });
 export const shareActivity = (body) => call('share', { method: 'POST', body: JSON.stringify(body) });
 export const getTrends = (cell, bands) => call(`trends?cell=${encodeURIComponent(cell)}&bands=${encodeURIComponent(bands.join(','))}`);

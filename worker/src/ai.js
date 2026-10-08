@@ -172,8 +172,32 @@ export class AIError extends Error {
 // Anthropic's own reason for a failed request (no secrets in it), for logs and for the parent.
 export const apiReason = (err) => String(err?.error?.error?.message || err?.message || '').replace(/\s+/g, ' ').slice(0, 240);
 
-// Every Claude call goes through here. The server-side fallback option isn't enabled on
-// every account; if the API rejects it, the same request is retried once without it.
+// The model every AI feature uses. Haiku 5.5 is the cheapest current model; set the
+// AI_MODEL variable to use another one (e.g. claude-sonnet-5-5) without a code change.
+export const DEFAULT_MODEL = 'claude-haiku-5-5';
+
+// Model plus the options that depend on it. Only the Opus, Sonnet and Fable 5.x models
+// offer the server-side fallback for declined requests; Haiku 5.5 has none (sending it
+// there does nothing useful), so it's left out.
+export function modelParams(env) {
+  const model = env.AI_MODEL || DEFAULT_MODEL;
+  return /^claude-(opus|sonnet|fable)-5/.test(model)
+    ? { model, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' }
+    : { model };
+}
+
+// Web search tool for the model: the newer version on Opus/Sonnet, the basic one elsewhere.
+// If the API rejects the version, createMessage retries once with the other one.
+const SEARCH_TYPES = ['web_search_20250305', 'web_search_20260209'];
+export const webSearch = (env, maxUses) => ({
+  type: /^claude-(opus|sonnet)-/.test(env.AI_MODEL || DEFAULT_MODEL) ? 'web_search_20260209' : 'web_search_20250305',
+  name: 'web_search',
+  max_uses: maxUses,
+});
+
+// Every Claude call goes through here. Two options aren't accepted everywhere: the
+// server-side fallback (not enabled on every account) and the web search tool version.
+// If the API rejects one of them, the same request is retried once without / with the other.
 // `meter` (from index.js) enforces the monthly budget: checked before, charged after.
 export async function createMessage(client, params, meter) {
   if (meter) await meter.check();
@@ -181,11 +205,20 @@ export async function createMessage(client, params, meter) {
   try {
     res = await client.beta.messages.create(params);
   } catch (err) {
-    if (!(err instanceof Anthropic.BadRequestError && params.fallbacks && /fallback|beta/i.test(apiReason(err)))) throw err;
-    console.warn('Claude rejected the fallback option; retrying without it:', apiReason(err));
-    const { fallbacks, betas = [], ...rest } = params;
-    const keep = betas.filter((b) => !b.startsWith('server-side-fallback'));
-    res = await client.beta.messages.create({ ...rest, ...(keep.length ? { betas: keep } : {}) });
+    if (!(err instanceof Anthropic.BadRequestError)) throw err;
+    const why = apiReason(err);
+    const search = params.tools?.find((t) => SEARCH_TYPES.includes(t.type));
+    let retry;
+    if (params.fallbacks && /fallback|beta/i.test(why)) {
+      const { fallbacks, betas = [], ...rest } = params;
+      const keep = betas.filter((b) => !b.startsWith('server-side-fallback'));
+      retry = { ...rest, ...(keep.length ? { betas: keep } : {}) };
+    } else if (search && /web_search/i.test(why)) {
+      const other = SEARCH_TYPES.find((t) => t !== search.type);
+      retry = { ...params, tools: params.tools.map((t) => (t === search ? { ...t, type: other } : t)) };
+    } else throw err;
+    console.warn('Claude rejected a request option; retrying once without it:', why);
+    res = await client.beta.messages.create(retry);
   }
   if (meter) await meter.add(res.model || params.model, res.usage);
   return res;
@@ -211,10 +244,8 @@ export async function suggest(env, ctx) {
   let response;
   try {
     response = await createMessage(client, {
-      model: env.AI_MODEL || 'claude-opus-5-5',
+      ...modelParams(env),
       max_tokens: 16000,
-      betas: ['server-side-fallback-2026-07-01'],
-      fallbacks: 'default',
       output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
       system: [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }],
       messages: [{ role: 'user', content: buildUserPrompt(ctx) }],

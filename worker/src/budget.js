@@ -10,6 +10,8 @@ const PRICES = {
   'claude-opus-5-5': { in: 4, out: 20, cacheRead: 0.2 },
   'claude-sonnet-5-5': { in: 2, out: 10, cacheRead: 0.2 },
   'claude-haiku-4-5': { in: 1, out: 5, cacheRead: 0.1 },
+  // Haiku 5.5 has two rate cards: prompts up to 100K tokens, and longer ones.
+  'claude-haiku-5-5': { in: 0.1, out: 0.5, cacheRead: 0.01, long: { in: 0.5, out: 2.5, cacheRead: 0.05 } },
 };
 const FALLBACK_PRICE = { in: 5, out: 25, cacheRead: 0.5 }; // unknown/fallback models: assume Opus-tier or higher
 const WEB_SEARCH_USD = 0.01;
@@ -17,7 +19,9 @@ const WEB_SEARCH_USD = 0.01;
 export const monthKey = (t = Date.now()) => new Date(t).toISOString().slice(0, 7);
 
 export function costUsd(model, usage = {}) {
-  const p = PRICES[model] || FALLBACK_PRICE;
+  let p = PRICES[model] || FALLBACK_PRICE;
+  const prompt = (usage.input_tokens || 0) + (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0);
+  if (p.long && prompt > 100_000) p = p.long;
   const m = 1e6;
   return ((usage.input_tokens || 0) * p.in
     + (usage.cache_creation_input_tokens || 0) * p.in * 1.25

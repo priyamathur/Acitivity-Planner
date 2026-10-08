@@ -38,7 +38,7 @@ There are two ways to host it. Both deploy automatically on every push to `main`
 4. Re-run the latest workflow, or push to `main`. The app goes live at `https://littleroam.<your-subdomain>.workers.dev`.
 
 Settings live in `worker/wrangler.toml`:
-- `AI_MODEL` (default `claude-opus-5-5`)
+- `AI_MODEL` (default `claude-haiku-5-5`, the cheapest model)
 - `AI_DAILY_LIMIT` (free AI suggestions per family per day)
 - `MIN_FAMILIES` (the anonymity threshold)
 
@@ -90,7 +90,17 @@ The MCP server needs only the Cloudflare deploy, not the Anthropic key. Requests
   - popularity claims not backed by real data are removed
   - AI-written ideas are clamped to safe ranges and labelled "AI idea"
 
+- **Plus waitlist** (optional): if a parent joins it, the server stores their email and how many kids they listed, nothing else. There's no public way to read it; the owner downloads it with the `ADMIN_TOKEN` secret (see below). No payment is taken.
+
 - **Chat** sends what you type plus your family plan to Claude: kids' nicknames and ages, classes and events, and both weekends' free slots. It may search the web for events you mention. It never sends photos, memories or coordinates. The tools run on your phone, and each one is checked before it changes anything.
+
+## Reading the Plus waitlist
+1. Make a long random password (for example from a password manager) and add it as a GitHub repository secret named `ADMIN_TOKEN` (Settings → Secrets and variables → Actions). Never put it in the code or paste it in chat.
+2. The next deploy sends it to the Worker.
+3. Download the list as a spreadsheet:
+   `curl -H "Authorization: Bearer YOUR_TOKEN" "https://littleroam.mathurpriya19.workers.dev/api/waitlist?format=csv" -o waitlist.csv`
+
+Without `ADMIN_TOKEN` the list can still be joined, but nobody (including you) can read it until the secret is added.
 
 Test coverage and results: [docs/TESTING.md](docs/TESTING.md)
 

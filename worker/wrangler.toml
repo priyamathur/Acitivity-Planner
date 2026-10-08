@@ -17,8 +17,8 @@ tag = "v1"
 new_sqlite_classes = ["Community"]
 
 [vars]
-# Model used for AI suggestions. Change to e.g. "claude-sonnet-5-5" or "claude-haiku-4-5" to cut cost.
-AI_MODEL = "claude-opus-5-5"
+# Model used for every AI feature. Haiku 5.5 is the cheapest; "claude-sonnet-5-5" or "claude-opus-5-5" plan better at higher cost.
+AI_MODEL = "claude-haiku-5-5"
 # Free AI suggestions per family per day (also school lookups and newsletter photos).
 AI_DAILY_LIMIT = "3"
 # Chat messages per family per day (tool steps inside a reply are not counted).

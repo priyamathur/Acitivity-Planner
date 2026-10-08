@@ -4,7 +4,7 @@
 // key, then makes one Claude call per step. The browser drives the loop:
 // it sends messages, runs any tool calls, then sends the results back.
 import Anthropic from '@anthropic-ai/sdk';
-import { CATALOG, AIError, createMessage, aiError } from './ai.js';
+import { CATALOG, AIError, createMessage, aiError, modelParams, webSearch } from './ai.js';
 
 const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 const PLACE_TYPES = ['playground', 'park', 'nature', 'library', 'museum', 'animals', 'water', 'picnic', 'market', 'treat'];
@@ -66,7 +66,7 @@ export const TOOLS = [
 ];
 
 // Each search costs about $0.01, often more than the reply itself, so one per reply.
-const WEB_SEARCH = { type: 'web_search_20260209', name: 'web_search', max_uses: 1 };
+const SEARCHES_PER_STEP = 1;
 
 // Frozen system prompt: identical bytes on every request, so it can be cached.
 export const SYSTEM_CHAT = `You are LittleRoam's family weekend assistant, inside the LittleRoam app. Parents chat with you to plan weekends around their kids' classes, add events they're excited about, and change their plans. You change the app directly with tools. Talk like a helpful friend: warm, brief, practical. Keep every reply to 1–3 short sentences, and search the web only when the parent asks about a specific event or place you need details for.
@@ -96,14 +96,12 @@ export async function chatStep(env, messages) {
   });
   try {
     const response = await createMessage(client, {
-      model: env.AI_MODEL || 'claude-opus-5-5',
+      ...modelParams(env),
       max_tokens: 16000,
-      betas: ['server-side-fallback-2026-07-01'],
-      fallbacks: 'default',
       output_config: { effort: 'low' },
       cache_control: { type: 'ephemeral' },
       system: [{ type: 'text', text: SYSTEM_CHAT }],
-      tools: [...TOOLS, WEB_SEARCH],
+      tools: [...TOOLS, webSearch(env, SEARCHES_PER_STEP)],
       messages,
     }, env.meter);
     return { content: response.content, stop_reason: response.stop_reason };
