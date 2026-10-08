@@ -9,6 +9,13 @@
 
 ---
 
+## 0d. Positioning decision (v3.3): a kids' schedule planner first
+With school calendars, classes and weekends in one place, LittleRoam starts to look like a "chief of staff for the house". We keep that as the **vision**, not the product:
+- **Now (the wedge):** *"Know your kids' week, and fill the free time well."* School days off and early release, weekly classes, and what to do in the gaps (weekends, days off), for the grade and ages of each child. Messaging, onboarding and the home screen lead with this.
+- **Next, only if families ask:** reminders tied to the schedule ("pack the swim bag Saturday 8:30"), and a shared plan with a partner or grandparent.
+- **Later, only with evidence:** chores, meals, shopping, bills. These compete head-on with established family-organizer apps and calendars, and each one adds more for the AI to get right; a planner that's wrong about a school date loses trust fast.
+- **How we'll check it:** show 5–10 parents "Kids' schedule planner" vs "AI chief of staff for your home" and see which they'd install and what they expect each to do.
+
 ## 0c. Decision log v3.2: find the school by name; saved ideas that teach the app
 - **Linking a school = type its name and the child's grade.** Most parents can't find a downloadable calendar, so the app does the finding:
   1. search schools and preschools by name near home (OpenStreetMap; spacing and an added town are tolerated: "Grandridge elementary issaquah" finds "Grand Ridge Elementary School");
